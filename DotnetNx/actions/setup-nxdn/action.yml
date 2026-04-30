@@ -1,0 +1,66 @@
+name: Setup nxdn
+description: Install nxdn and export .NET/MSBuild resolver environment for Nx.
+
+inputs:
+  dotnet-version:
+    description: Optional .NET SDK version for actions/setup-dotnet.
+    required: false
+    default: ''
+  global-json-file:
+    description: Optional global.json path for actions/setup-dotnet.
+    required: false
+    default: global.json
+  node-version:
+    description: Node.js version to install when setup-node is true.
+    required: false
+    default: '22'
+  setup-node:
+    description: Whether to setup Node.js for Nx.
+    required: false
+    default: 'true'
+  tool-version:
+    description: Optional DotnetNx.Tool version to install.
+    required: false
+    default: ''
+  workspace:
+    description: Workspace root.
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup .NET from global.json
+      if: inputs.dotnet-version == '' && inputs.global-json-file != ''
+      uses: actions/setup-dotnet@v5
+      with:
+        global-json-file: ${{ inputs.global-json-file }}
+
+    - name: Setup .NET from version
+      if: inputs.dotnet-version != ''
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+
+    - name: Setup Node.js
+      if: inputs.setup-node == 'true'
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install nxdn
+      shell: bash
+      env:
+        DOTNET_NX_TOOL_VERSION: ${{ inputs.tool-version }}
+      run: |
+        set -euo pipefail
+        if [[ -n "$DOTNET_NX_TOOL_VERSION" ]]; then
+          dotnet tool update --global DotnetNx.Tool --version "$DOTNET_NX_TOOL_VERSION"
+        else
+          dotnet tool update --global DotnetNx.Tool
+        fi
+
+    - name: Export resolver environment
+      shell: bash
+      working-directory: ${{ inputs.workspace }}
+      run: nxdn export-env --format github

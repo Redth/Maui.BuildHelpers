@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DotnetNx.Core/DotnetNx.Core.csproj" />
+    <Project Path="src/DotnetNx.MSBuild/DotnetNx.MSBuild.csproj" />
+    <Project Path="src/DotnetNx.Tool/DotnetNx.Tool.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DotnetNx.Core.Tests/DotnetNx.Core.Tests.csproj" />
+    <Project Path="tests/DotnetNx.Tool.Tests/DotnetNx.Tool.Tests.csproj" />
+  </Folder>
+</Solution>
