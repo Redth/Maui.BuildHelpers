@@ -1,0 +1,101 @@
+name: Publish DotnetNx packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version to publish.
+        required: true
+        type: string
+      npm-tag:
+        description: npm dist-tag to use when publishing the plugin.
+        required: true
+        default: alpha
+        type: choice
+        options:
+          - alpha
+          - beta
+          - latest
+      publish-nugets:
+        description: Publish DotnetNx NuGet packages to GitHub Packages.
+        required: true
+        default: true
+        type: boolean
+      publish-npm:
+        description: Publish the @redth/dotnet-nx npm plugin to GitHub Packages.
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Publish packages
+    runs-on: ubuntu-latest
+
+    env:
+      PACKAGE_VERSION: ${{ inputs.version }}
+      NUGET_SOURCE: https://nuget.pkg.github.com/Redth/index.json
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: '@redth'
+
+      - name: Test .NET projects
+        run: dotnet test DotnetNx/DotnetNx.slnx --configuration Release
+
+      - name: Validate npm plugin
+        working-directory: DotnetNx/npm/dotnet-nx
+        run: |
+          node --check index.js
+          npm pack --dry-run
+
+      - name: Pack NuGet packages
+        if: inputs.publish-nugets
+        run: |
+          dotnet pack DotnetNx/DotnetNx.slnx \
+            --configuration Release \
+            -p:PackageVersion="$PACKAGE_VERSION" \
+            -p:ContinuousIntegrationBuild=true
+
+      - name: Publish NuGet packages
+        if: inputs.publish-nugets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t packages < <(find DotnetNx/src -path '*/bin/Release/*.nupkg' -not -name '*.symbols.nupkg' | sort)
+          if [[ ${#packages[@]} -eq 0 ]]; then
+            echo "No NuGet packages were produced."
+            exit 1
+          fi
+
+          for package in "${packages[@]}"; do
+            dotnet nuget push "$package" \
+              --source "$NUGET_SOURCE" \
+              --api-key "$GITHUB_TOKEN" \
+              --skip-duplicate
+          done
+
+      - name: Publish npm plugin
+        if: inputs.publish-npm
+        working-directory: DotnetNx/npm/dotnet-nx
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TAG: ${{ inputs.npm-tag }}
+        run: |
+          npm version "$PACKAGE_VERSION" --no-git-tag-version --allow-same-version
+          npm publish --tag "$NPM_TAG"

@@ -1,0 +1,60 @@
+name: DotnetNx CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - DotnetNx/**
+      - .github/workflows/dotnetnx-ci.yml
+      - .github/workflows/publish-dotnetnx.yml
+      - README.md
+  push:
+    branches: [main]
+    paths:
+      - DotnetNx/**
+      - .github/workflows/dotnetnx-ci.yml
+      - .github/workflows/publish-dotnetnx.yml
+      - README.md
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate DotnetNx
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Test .NET projects
+        run: dotnet test DotnetNx/DotnetNx.slnx --configuration Release
+
+      - name: Validate nxdn metadata output
+        run: |
+          dotnet run \
+            --project DotnetNx/src/DotnetNx.Tool/DotnetNx.Tool.csproj \
+            --configuration Release \
+            -- \
+            project-metadata \
+            --workspace DotnetNx \
+            --project src/DotnetNx.Core/DotnetNx.Core.csproj \
+            > dotnetnx-metadata.json
+          node -e 'JSON.parse(require("fs").readFileSync("dotnetnx-metadata.json", "utf8"))'
+
+      - name: Validate npm plugin
+        working-directory: DotnetNx/npm/dotnet-nx
+        run: |
+          node --check index.js
+          npm pack --dry-run
+
+      - name: Pack NuGet packages
+        run: dotnet pack DotnetNx/DotnetNx.slnx --configuration Release

@@ -102,6 +102,15 @@ steps:
       os-tag: macos
 ```
 
+## Publishing
+
+The repository includes two top-level workflows for DotnetNx:
+
+- `DotnetNx CI` validates the .NET projects, `nxdn project-metadata`, the npm plugin, and NuGet packing on PRs and pushes that touch DotnetNx files.
+- `Publish DotnetNx packages` is a manual `workflow_dispatch` workflow that publishes all DotnetNx NuGet packages to `https://nuget.pkg.github.com/Redth/index.json` and publishes `@redth/dotnet-nx` to `https://npm.pkg.github.com`.
+
+Run the publish workflow from GitHub Actions with the package version to publish, for example `0.1.0-alpha.1`. The workflow uses `GITHUB_TOKEN` with `packages: write` permission, so no additional package secret is required for publishing to this repository owner.
+
 ## Migration notes from `maui-labs#204`
 
 - Replace `eng/nx/nx-msbuild-resolvers.js` with `nxdn export-env` or `nxdn nx`.
