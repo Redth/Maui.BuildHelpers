@@ -1,0 +1,93 @@
+name: DotnetNx affected info
+description: Compute Nx affected project information through nxdn.
+
+inputs:
+  workspace:
+    description: Workspace root.
+    required: false
+    default: '.'
+  base:
+    description: Base commit SHA. Defaults to PR base or previous push SHA.
+    required: false
+    default: ''
+  head:
+    description: Head commit SHA. Defaults to github.sha.
+    required: false
+    default: ''
+  artifact-directory:
+    description: Directory where affected JSON artifacts are written.
+    required: false
+    default: artifacts/nx
+
+outputs:
+  base:
+    description: Resolved base SHA.
+    value: ${{ steps.range.outputs.base }}
+  head:
+    description: Resolved head SHA.
+    value: ${{ steps.range.outputs.head }}
+  count:
+    description: Number of affected projects.
+    value: ${{ steps.summary.outputs.count }}
+  projects-json:
+    description: Path to the affected projects JSON file.
+    value: ${{ steps.summary.outputs.projects-json }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute affected range
+      id: range
+      shell: bash
+      env:
+        BASE_INPUT: ${{ inputs.base }}
+        HEAD_INPUT: ${{ inputs.head }}
+        GITHUB_BASE_INPUT: ${{ github.event.pull_request.base.sha || github.event.before }}
+        GITHUB_HEAD_INPUT: ${{ github.sha }}
+      run: |
+        set -euo pipefail
+        base="${BASE_INPUT:-$GITHUB_BASE_INPUT}"
+        head="${HEAD_INPUT:-$GITHUB_HEAD_INPUT}"
+        if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+          base="$(git rev-parse "${head}~1" 2>/dev/null || echo "$head")"
+        fi
+        echo "base=$base" >> "$GITHUB_OUTPUT"
+        echo "head=$head" >> "$GITHUB_OUTPUT"
+
+    - name: List affected projects
+      shell: bash
+      working-directory: ${{ inputs.workspace }}
+      run: |
+        set -euo pipefail
+        mkdir -p "${{ inputs.artifact-directory }}"
+        nxdn show-projects -- \
+          --affected \
+          --base="${{ steps.range.outputs.base }}" \
+          --head="${{ steps.range.outputs.head }}" \
+          --json > "${{ inputs.artifact-directory }}/affected-projects.json"
+
+    - name: Summarize affected projects
+      id: summary
+      shell: bash
+      working-directory: ${{ inputs.workspace }}
+      env:
+        PROJECTS_JSON: ${{ inputs.artifact-directory }}/affected-projects.json
+      run: |
+        set -euo pipefail
+        count="$(node -e 'const fs=require("fs"); const p=process.env.PROJECTS_JSON; const raw=fs.existsSync(p)?fs.readFileSync(p,"utf8").trim():"[]"; const parsed=raw?JSON.parse(raw):[]; const projects=Array.isArray(parsed)?parsed:Object.keys(parsed); console.log(projects.length);')"
+        echo "count=$count" >> "$GITHUB_OUTPUT"
+        echo "projects-json=$PROJECTS_JSON" >> "$GITHUB_OUTPUT"
+        node <<'JS' >> "$GITHUB_STEP_SUMMARY"
+        const fs = require('fs');
+        const path = process.env.PROJECTS_JSON;
+        const raw = fs.existsSync(path) ? fs.readFileSync(path, 'utf8').trim() : '[]';
+        const parsed = raw ? JSON.parse(raw) : [];
+        const projects = (Array.isArray(parsed) ? parsed : Object.keys(parsed)).sort();
+        console.log('## DotnetNx affected projects');
+        console.log();
+        console.log(`Affected projects: **${projects.length}**`);
+        console.log();
+        for (const project of projects) {
+          console.log(`- \`${project}\``);
+        }
+        JS

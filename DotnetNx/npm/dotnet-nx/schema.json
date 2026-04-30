@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/schema",
+  "type": "object",
+  "properties": {
+    "nxdnPath": {
+      "type": "string",
+      "description": "Path to the nxdn executable. Defaults to DOTNET_NX_NXDN or nxdn on PATH."
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,16 @@
+<Project>
+  <UsingTask
+    TaskName="DotnetNx.MSBuild.WriteNxProjectMetadata"
+    AssemblyFile="$(MSBuildThisFileDirectory)..\tasks\net10.0\DotnetNx.MSBuild.dll" />
+
+  <Target Name="WriteDotnetNxProjectMetadata">
+    <ItemGroup>
+      <DotnetNxProject Include="$(MSBuildProjectFullPath)" Condition="'@(DotnetNxProject)' == ''" />
+    </ItemGroup>
+
+    <WriteNxProjectMetadata
+      WorkspaceRoot="$(DotnetNxWorkspaceRoot)"
+      OutputFile="$(DotnetNxMetadataOutput)"
+      ProjectFiles="@(DotnetNxProject)" />
+  </Target>
+</Project>

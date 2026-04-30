@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\DotnetNx.Core\DotnetNx.Core.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>nxdn</ToolCommandName>
+    <PackageId>DotnetNx.Tool</PackageId>
+    <Description>DotnetNx global tool for invoking Nx with .NET/MSBuild resolver environment support.</Description>
+  </PropertyGroup>
+
+</Project>

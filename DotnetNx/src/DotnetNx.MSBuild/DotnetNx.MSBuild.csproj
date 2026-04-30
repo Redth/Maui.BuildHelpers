@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\DotnetNx.Core\DotnetNx.Core.csproj" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Build.Framework" Version="18.3.3" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" GeneratePathProperty="true" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Build.Utilities.Core" Version="18.3.3" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <PackageId>DotnetNx.MSBuild</PackageId>
+    <Description>MSBuild props, targets, and tasks for DotnetNx project metadata generation.</Description>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);AddDotnetNxTaskFilesToPackage</TargetsForTfmSpecificContentInPackage>
+    <NoWarn>$(NoWarn);NU5100;NU5128</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="buildTransitive\**\*.*" Pack="true" PackagePath="buildTransitive\" />
+  </ItemGroup>
+
+  <Target Name="AddDotnetNxTaskFilesToPackage">
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="$(TargetPath)" PackagePath="tasks\$(TargetFramework)\" />
+      <TfmSpecificPackageFile Include="$(TargetDir)DotnetNx.Core.dll" PackagePath="tasks\$(TargetFramework)\" Condition="Exists('$(TargetDir)DotnetNx.Core.dll')" />
+      <TfmSpecificPackageFile Include="$(TargetDir)Microsoft.Build.Locator.dll" PackagePath="tasks\$(TargetFramework)\" Condition="Exists('$(TargetDir)Microsoft.Build.Locator.dll')" />
+      <TfmSpecificPackageFile Include="$(PkgMicrosoft_Build_Locator)\lib\net8.0\Microsoft.Build.Locator.dll" PackagePath="tasks\$(TargetFramework)\" Condition="Exists('$(PkgMicrosoft_Build_Locator)\lib\net8.0\Microsoft.Build.Locator.dll')" />
+    </ItemGroup>
+  </Target>
+
+</Project>

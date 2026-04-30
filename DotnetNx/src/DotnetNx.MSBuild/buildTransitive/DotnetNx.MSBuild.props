@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <DotnetNxMetadataOutput Condition="'$(DotnetNxMetadataOutput)' == ''">$(BaseIntermediateOutputPath)dotnetnx/project-metadata.json</DotnetNxMetadataOutput>
+    <DotnetNxWorkspaceRoot Condition="'$(DotnetNxWorkspaceRoot)' == ''">$(MSBuildProjectDirectory)</DotnetNxWorkspaceRoot>
+  </PropertyGroup>
+</Project>
