@@ -16,6 +16,9 @@
     "maui"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "peerDependencies": {
     "nx": ">=22.0.0"
   }
