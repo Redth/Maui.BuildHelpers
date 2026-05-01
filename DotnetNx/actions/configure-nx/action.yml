@@ -1,0 +1,38 @@
+name: DotnetNx configure Nx
+description: Validate or write minimal Nx plugin configuration for DotnetNx.
+
+inputs:
+  workspace:
+    description: Workspace root.
+    required: false
+    default: '.'
+  write:
+    description: Whether to write missing nx.json plugin entries.
+    required: false
+    default: 'true'
+  plugin:
+    description: DotnetNx npm plugin package name.
+    required: false
+    default: '@redth/dotnet-nx'
+  dotnet-plugin:
+    description: '@nx/dotnet plugin package name.'
+    required: false
+    default: '@nx/dotnet'
+
+runs:
+  using: composite
+  steps:
+    - name: Configure Nx
+      shell: bash
+      working-directory: ${{ inputs.workspace }}
+      env:
+        DOTNET_NX_WRITE: ${{ inputs.write }}
+        DOTNET_NX_PLUGIN: ${{ inputs.plugin }}
+        DOTNET_NX_DOTNET_PLUGIN: ${{ inputs.dotnet-plugin }}
+      run: |
+        set -euo pipefail
+        args=(configure-nx --plugin "$DOTNET_NX_PLUGIN" --dotnet-plugin "$DOTNET_NX_DOTNET_PLUGIN")
+        if [[ "$DOTNET_NX_WRITE" == "true" ]]; then
+          args+=(--write)
+        fi
+        nxdn "${args[@]}"

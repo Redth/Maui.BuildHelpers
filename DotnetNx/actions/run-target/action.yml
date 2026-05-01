@@ -7,11 +7,17 @@ inputs:
     required: false
     default: '.'
   project:
-    description: Nx project name to run.
-    required: true
+    description: Nx project name to run. Required unless run-id is set.
+    required: false
+    default: ''
   target:
-    description: Nx target to run, such as build, test, pack, or publish.
-    required: true
+    description: Nx target to run, such as build, test, pack, or publish. Required unless run-id is set.
+    required: false
+    default: ''
+  run-id:
+    description: Full Nx run id, such as ProjectName:test. When set, project and target are ignored.
+    required: false
+    default: ''
   configuration:
     description: Optional Nx target configuration.
     required: false
@@ -38,6 +44,7 @@ runs:
       env:
         DOTNET_NX_PROJECT: ${{ inputs.project }}
         DOTNET_NX_TARGET: ${{ inputs.target }}
+        DOTNET_NX_RUN_ID: ${{ inputs.run-id }}
         DOTNET_NX_CONFIGURATION: ${{ inputs.configuration }}
         DOTNET_NX_EXTRA_ARGS: ${{ inputs.extra-args }}
         DOTNET_NX_ENV: ${{ inputs.env }}
@@ -67,7 +74,14 @@ runs:
           # shellcheck source=/dev/null
           source "$script_file"
         fi
-        run_id="$DOTNET_NX_PROJECT:$DOTNET_NX_TARGET"
+        run_id="$DOTNET_NX_RUN_ID"
+        if [[ -z "$run_id" ]]; then
+          if [[ -z "$DOTNET_NX_PROJECT" || -z "$DOTNET_NX_TARGET" ]]; then
+            echo "::error::Set either run-id or both project and target."
+            exit 1
+          fi
+          run_id="$DOTNET_NX_PROJECT:$DOTNET_NX_TARGET"
+        fi
         args=(run "$run_id")
         if [[ -n "$DOTNET_NX_CONFIGURATION" ]]; then
           args+=("--configuration=$DOTNET_NX_CONFIGURATION")

@@ -24,8 +24,13 @@ DotnetNx/
     dotnet-nx/           Thin Nx plugin that shells out to nxdn.
   actions/
     setup-nxdn/          Composite action for tool setup and resolver environment export.
+    setup-cache/         Composite action for Nx and .NET build cache paths.
+    configure-nx/        Composite action for validating or writing nx.json plugin entries.
+    doctor/              Composite action for DotnetNx diagnostics.
     affected-info/       Composite action for affected project reporting.
+    affected-matrix/     Composite action for OS-tagged affected matrix outputs.
     run-affected/        Composite action for running affected Nx targets.
+    run-target/          Composite action for running a single Nx project target.
   tests/
     DotnetNx.Core.Tests/
     DotnetNx.Tool.Tests/
@@ -80,10 +85,52 @@ That keeps MSBuild evaluation and SDK path discovery in .NET while still satisfy
 
 Initial composite actions are provided under `actions/`:
 
-- `setup-nxdn`: setup .NET/Node, install `DotnetNx.Tool`, and export resolver environment.
+- `setup-nxdn`: setup .NET/Node, install `DotnetNx.Tool`, and export resolver environment. By default it installs from `https://nuget.pkg.github.com/Redth/index.json` using `github.token`, so consuming workflows need `packages: read`.
+- `setup-cache`: restore/cache Nx cache plus common .NET build output paths.
+- `configure-nx`: validate or write minimal `nx.json` plugin entries for `@nx/dotnet` and `@redth/dotnet-nx`.
+- `doctor`: run `nxdn diagnose`, validate Nx configuration, and optionally emit project metadata JSON.
 - `affected-info`: compute and summarize affected projects.
+- `affected-matrix`: compute OS-tagged affected project lists and a GitHub Actions matrix.
 - `run-affected`: run an affected target with optional `os:<host>` filtering.
 - `run-target`: run a specific Nx project target through `nxdn`.
+
+Minimal setup from another repository:
+
+```yaml
+permissions:
+  contents: read
+  packages: read
+
+steps:
+  - uses: actions/checkout@v6
+    with:
+      fetch-depth: 0
+  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
+    with:
+      tool-version: 0.1.0
+```
+
+Use `tool-source`, `tool-source-name`, `tool-source-username`, `github-token`, and `tool-package-id` on `setup-nxdn` when installing `nxdn` from a different NuGet feed or package ID.
+
+Validate a consuming repo:
+
+```yaml
+steps:
+  - uses: actions/checkout@v6
+  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
+  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/doctor@v0.3
+```
+
+Write missing Nx plugin configuration:
+
+```yaml
+steps:
+  - uses: actions/checkout@v6
+  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
+  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/configure-nx@v0.3
+    with:
+      write: true
+```
 
 Example workflow shape:
 
@@ -92,10 +139,11 @@ steps:
   - uses: actions/checkout@v6
     with:
       fetch-depth: 0
-  - uses: ./DotnetNx/actions/setup-nxdn
+  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
+  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-cache@v0.3
   - id: affected
-    uses: ./DotnetNx/actions/affected-info
-  - uses: ./DotnetNx/actions/run-affected
+    uses: Redth/Maui.BuildHelpers/DotnetNx/actions/affected-info@v0.3
+  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/run-affected@v0.3
     with:
       target: build
       base: ${{ steps.affected.outputs.base }}
@@ -103,13 +151,51 @@ steps:
       os-tag: macos
 ```
 
+Build an OS-tagged affected matrix:
+
+```yaml
+jobs:
+  affected:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.affected.outputs.matrix }}
+      has-work: ${{ steps.affected.outputs.has-work }}
+      base: ${{ steps.affected.outputs.base }}
+      head: ${{ steps.affected.outputs.head }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
+      - id: affected
+        uses: Redth/Maui.BuildHelpers/DotnetNx/actions/affected-matrix@v0.3
+
+  build:
+    needs: affected
+    if: needs.affected.outputs.has-work == 'true'
+    strategy:
+      matrix: ${{ fromJson(needs.affected.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
+      - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/run-affected@v0.3
+        with:
+          target: build
+          base: ${{ needs.affected.outputs.base }}
+          head: ${{ needs.affected.outputs.head }}
+          os-tag: ${{ matrix.osTag }}
+```
+
 Run a specific project target when you already know the Nx project and target:
 
 ```yaml
 steps:
   - uses: actions/checkout@v6
-  - uses: ./DotnetNx/actions/setup-nxdn
-  - uses: ./DotnetNx/actions/run-target
+  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
+  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/run-target@v0.3
     with:
       project: Microsoft.Maui.DevFlow.Agent.IntegrationTests.Android
       target: test
@@ -126,10 +212,27 @@ That action runs:
 nxdn nx -- run Microsoft.Maui.DevFlow.Agent.IntegrationTests.Android:test
 ```
 
+You can also pass the full Nx run id directly:
+
+```yaml
+- uses: Redth/Maui.BuildHelpers/DotnetNx/actions/run-target@v0.3
+  with:
+    run-id: Microsoft.Maui.DevFlow.Agent.IntegrationTests.Android:test
+```
+
 Both `run-target` and `run-affected` accept:
 
 - `env`: multiline `NAME=VALUE` entries exported before `nxdn` runs.
 - `script`: a Bash setup script sourced in the same shell before `nxdn` runs, useful for computed environment values.
+
+Cache setup defaults to `.nx/cache`, `artifacts/bin`, and `artifacts/obj`, with `extra-paths` for repo-specific additions:
+
+```yaml
+- uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-cache@v0.3
+  with:
+    extra-paths: |
+      ~/.nuget/packages
+```
 
 ## Publishing
 

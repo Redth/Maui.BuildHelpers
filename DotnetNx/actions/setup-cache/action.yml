@@ -1,0 +1,86 @@
+name: DotnetNx setup cache
+description: Configure GitHub Actions cache entries for Nx and common .NET build outputs.
+
+inputs:
+  workspace:
+    description: Workspace root.
+    required: false
+    default: '.'
+  cache-version:
+    description: Manual cache version segment for invalidating DotnetNx caches.
+    required: false
+    default: v1
+  extra-paths:
+    description: Additional newline-delimited paths to include in the cache.
+    required: false
+    default: ''
+  restore-keys:
+    description: Additional restore keys.
+    required: false
+    default: ''
+
+outputs:
+  cache-hit:
+    description: Whether an exact cache match was restored.
+    value: ${{ steps.cache.outputs.cache-hit }}
+  cache-key:
+    description: Cache key used for this run.
+    value: ${{ steps.key.outputs.cache-key }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute cache key
+      id: key
+      shell: bash
+      env:
+        DOTNET_NX_WORKSPACE: ${{ inputs.workspace }}
+        DOTNET_NX_CACHE_VERSION: ${{ inputs.cache-version }}
+      run: |
+        set -euo pipefail
+        workspace="$(cd "$DOTNET_NX_WORKSPACE" && pwd)"
+        manifest="$(mktemp)"
+        if git -C "$workspace" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          git -C "$workspace" ls-files \
+            '*.csproj' '*.fsproj' '*.vbproj' '*.props' '*.targets' \
+            'global.json' 'Directory.Packages.props' 'Directory.Build.props' 'Directory.Build.targets' \
+            'nx.json' 'package.json' 'package-lock.json' \
+            | sort > "$manifest"
+        else
+          find "$workspace" -type f \( \
+            -name '*.csproj' -o -name '*.fsproj' -o -name '*.vbproj' -o -name '*.props' -o -name '*.targets' -o \
+            -name 'global.json' -o -name 'nx.json' -o -name 'package.json' -o -name 'package-lock.json' \
+            \) | sort > "$manifest"
+        fi
+
+        if [[ -s "$manifest" ]]; then
+          hash="$(
+            while IFS= read -r file; do
+              if [[ -f "$workspace/$file" ]]; then
+                shasum -a 256 "$workspace/$file"
+              elif [[ -f "$file" ]]; then
+                shasum -a 256 "$file"
+              fi
+            done < "$manifest" | shasum -a 256 | awk '{ print $1 }'
+          )"
+        else
+          hash="empty"
+        fi
+
+        key="${RUNNER_OS}-dotnetnx-${DOTNET_NX_CACHE_VERSION}-${hash}"
+        echo "cache-key=$key" >> "$GITHUB_OUTPUT"
+        rm -f "$manifest"
+
+    - name: Restore DotnetNx cache
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ inputs.workspace }}/.nx/cache
+          ${{ inputs.workspace }}/artifacts/bin
+          ${{ inputs.workspace }}/artifacts/obj
+          ${{ inputs.extra-paths }}
+        key: ${{ steps.key.outputs.cache-key }}
+        restore-keys: |
+          ${{ runner.os }}-dotnetnx-${{ inputs.cache-version }}-
+          ${{ inputs.restore-keys }}

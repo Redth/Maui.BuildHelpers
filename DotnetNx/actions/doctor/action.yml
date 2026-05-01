@@ -1,0 +1,61 @@
+name: DotnetNx doctor
+description: Run DotnetNx diagnostics for dotnet, MSBuild SDK resolvers, Nx config, and project metadata.
+
+inputs:
+  workspace:
+    description: Workspace root.
+    required: false
+    default: '.'
+  check-nx-config:
+    description: Whether to validate nx.json plugin configuration.
+    required: false
+    default: 'true'
+  metadata-output:
+    description: Optional path for project metadata JSON. Leave empty to skip metadata generation.
+    required: false
+    default: artifacts/nx/dotnetnx-project-metadata.json
+
+outputs:
+  metadata-json:
+    description: Project metadata JSON path.
+    value: ${{ steps.metadata.outputs.metadata-json }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run diagnostics
+      shell: bash
+      working-directory: ${{ inputs.workspace }}
+      run: |
+        set -euo pipefail
+        summary_file="$(mktemp)"
+        trap 'rm -f "$summary_file"' EXIT
+        {
+          echo "## DotnetNx doctor"
+          echo
+          echo '```text'
+          nxdn diagnose
+          echo '```'
+        } | tee "$summary_file"
+        if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+          cat "$summary_file" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Validate Nx configuration
+      if: inputs.check-nx-config == 'true'
+      shell: bash
+      working-directory: ${{ inputs.workspace }}
+      run: nxdn configure-nx
+
+    - name: Generate project metadata
+      id: metadata
+      if: inputs.metadata-output != ''
+      shell: bash
+      working-directory: ${{ inputs.workspace }}
+      env:
+        DOTNET_NX_METADATA_OUTPUT: ${{ inputs.metadata-output }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$(dirname "$DOTNET_NX_METADATA_OUTPUT")"
+        nxdn project-metadata > "$DOTNET_NX_METADATA_OUTPUT"
+        echo "metadata-json=$DOTNET_NX_METADATA_OUTPUT" >> "$GITHUB_OUTPUT"

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using DotnetNx.Core;
 
 namespace DotnetNx.Tool;
@@ -24,6 +26,7 @@ public static class Program
                 "export-env" => ExportEnvironment(commandArgs, output, error),
                 "project-metadata" => WriteProjectMetadata(commandArgs, output),
                 "diagnose" => Diagnose(commandArgs, output),
+                "configure-nx" => ConfigureNx(commandArgs, output),
                 "nx" => RunNx(commandArgs),
                 "affected" => RunNxWithPrefix("affected", commandArgs),
                 "show-projects" => RunNxWithPrefix("show projects", commandArgs),
@@ -86,6 +89,57 @@ public static class Program
         output.WriteLine($"MSBuild SDK resolvers: {sdkEnvironment.SdkResolversDirectory}");
         output.WriteLine($"MSBuild SDKs: {sdkEnvironment.SdksDirectory}");
         output.WriteLine($"Projects discovered: {projects.Count}");
+        return 0;
+    }
+
+    private static int ConfigureNx(List<string> args, TextWriter output)
+    {
+        var workspaceRoot = GetWorkspace(args);
+        var write = TakeFlag(args, "--write");
+        var dotnetPlugin = TakeOption(args, "--dotnet-plugin") ?? "@nx/dotnet";
+        var plugin = TakeOption(args, "--plugin") ?? "@redth/dotnet-nx";
+        var requiredPlugins = new[] { dotnetPlugin, plugin };
+        var nxJsonPath = Path.Combine(workspaceRoot, "nx.json");
+        var root = ReadNxJson(nxJsonPath, write);
+
+        var plugins = root["plugins"] as JsonArray;
+        if (plugins is null)
+        {
+            if (!write)
+            {
+                throw new InvalidOperationException($"nx.json does not contain a plugins array. Run 'nxdn configure-nx --write' to add {dotnetPlugin} and {plugin}.");
+            }
+
+            plugins = [];
+            root["plugins"] = plugins;
+        }
+
+        var missing = requiredPlugins
+            .Where(requiredPlugin => !ContainsPlugin(plugins, requiredPlugin))
+            .ToArray();
+        if (missing.Length > 0 && !write)
+        {
+            throw new InvalidOperationException($"nx.json is missing required plugin entries: {string.Join(", ", missing)}. Run 'nxdn configure-nx --write' to add them.");
+        }
+
+        foreach (var missingPlugin in missing)
+        {
+            plugins.Add(missingPlugin);
+        }
+
+        if (missing.Length > 0)
+        {
+            Directory.CreateDirectory(workspaceRoot);
+            File.WriteAllText(nxJsonPath, root.ToJsonString(JsonServices.Options) + Environment.NewLine);
+            output.WriteLine($"Updated {Path.GetRelativePath(Environment.CurrentDirectory, nxJsonPath)} with {string.Join(", ", missing)}.");
+        }
+        else
+        {
+            output.WriteLine("nx.json already contains required DotnetNx plugin entries.");
+        }
+
+        WarnIfPackageMissing(workspaceRoot, dotnetPlugin, output);
+        WarnIfPackageMissing(workspaceRoot, plugin, output);
         return 0;
     }
 
@@ -224,6 +278,18 @@ public static class Program
         }
     }
 
+    private static bool TakeFlag(List<string> args, string name)
+    {
+        var index = args.FindIndex(arg => string.Equals(arg, name, StringComparison.Ordinal));
+        if (index < 0)
+        {
+            return false;
+        }
+
+        args.RemoveAt(index);
+        return true;
+    }
+
     private static string[] StripDoubleDash(IReadOnlyList<string> args)
     {
         if (args.Count > 0 && args[0] == "--")
@@ -253,6 +319,88 @@ public static class Program
         return null;
     }
 
+    private static JsonObject ReadNxJson(string nxJsonPath, bool write)
+    {
+        if (!File.Exists(nxJsonPath))
+        {
+            if (!write)
+            {
+                throw new FileNotFoundException($"Could not find nx.json at {nxJsonPath}. Run 'nxdn configure-nx --write' to create it.");
+            }
+
+            return new JsonObject
+            {
+                ["analytics"] = false,
+            };
+        }
+
+        var node = JsonNode.Parse(File.ReadAllText(nxJsonPath), documentOptions: new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        });
+
+        return node as JsonObject
+            ?? throw new InvalidOperationException($"Expected nx.json to contain a JSON object: {nxJsonPath}");
+    }
+
+    private static bool ContainsPlugin(JsonArray plugins, string plugin)
+    {
+        foreach (var entry in plugins)
+        {
+            if (entry is null)
+            {
+                continue;
+            }
+
+            if (entry is JsonValue value &&
+                value.TryGetValue<string>(out var pluginName) &&
+                string.Equals(pluginName, plugin, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (entry is JsonObject pluginObject &&
+                pluginObject["plugin"] is JsonValue objectPluginValue &&
+                objectPluginValue.TryGetValue<string>(out var objectPluginName) &&
+                string.Equals(objectPluginName, plugin, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void WarnIfPackageMissing(string workspaceRoot, string packageName, TextWriter output)
+    {
+        var packageJsonPath = Path.Combine(workspaceRoot, "package.json");
+        if (!File.Exists(packageJsonPath))
+        {
+            output.WriteLine($"Warning: package.json was not found; ensure {packageName} is installed in the Nx workspace.");
+            return;
+        }
+
+        using var document = JsonDocument.Parse(File.ReadAllText(packageJsonPath), new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        });
+        if (HasDependency(document.RootElement, "dependencies", packageName) ||
+            HasDependency(document.RootElement, "devDependencies", packageName) ||
+            HasDependency(document.RootElement, "peerDependencies", packageName))
+        {
+            return;
+        }
+
+        output.WriteLine($"Warning: package.json does not list {packageName}; install it before running Nx.");
+    }
+
+    private static bool HasDependency(JsonElement root, string propertyName, string packageName) =>
+        root.TryGetProperty(propertyName, out var dependencies) &&
+        dependencies.ValueKind == JsonValueKind.Object &&
+        dependencies.TryGetProperty(packageName, out _);
+
     private static int UnknownCommand(string command, TextWriter error)
     {
         error.WriteLine($"Unknown command '{command}'.");
@@ -268,6 +416,7 @@ public static class Program
         output.WriteLine("  nxdn export-env [--workspace <path>] [--format shell|github|json]");
         output.WriteLine("  nxdn project-metadata [--workspace <path>] [--project <path>]...");
         output.WriteLine("  nxdn diagnose [--workspace <path>]");
+        output.WriteLine("  nxdn configure-nx [--workspace <path>] [--write] [--plugin <name>] [--dotnet-plugin <name>]");
         output.WriteLine("  nxdn nx [--workspace <path>] -- <nx args>");
         output.WriteLine("  nxdn affected [--workspace <path>] -- <nx affected args>");
         output.WriteLine("  nxdn show-projects [--workspace <path>] -- <nx show projects args>");

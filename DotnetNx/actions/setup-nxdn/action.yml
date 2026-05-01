@@ -5,11 +5,11 @@ inputs:
   dotnet-version:
     description: Optional .NET SDK version for actions/setup-dotnet.
     required: false
-    default: ''
+    default: 10.0.x
   global-json-file:
     description: Optional global.json path for actions/setup-dotnet.
     required: false
-    default: global.json
+    default: ''
   node-version:
     description: Node.js version to install when setup-node is true.
     required: false
@@ -22,6 +22,26 @@ inputs:
     description: Optional DotnetNx.Tool version to install.
     required: false
     default: ''
+  tool-package-id:
+    description: NuGet package ID for the nxdn tool.
+    required: false
+    default: DotnetNx.Tool
+  tool-source:
+    description: NuGet source used to install the nxdn tool. Defaults to GitHub Packages for this repository owner.
+    required: false
+    default: https://nuget.pkg.github.com/Redth/index.json
+  tool-source-name:
+    description: Name to use when adding the nxdn tool NuGet source to a temporary NuGet.config.
+    required: false
+    default: redth-github
+  tool-source-username:
+    description: Username for authenticated NuGet sources. Defaults to the GitHub repository owner.
+    required: false
+    default: ''
+  github-token:
+    description: Token used for authenticated GitHub Packages NuGet sources. Defaults to github.token.
+    required: false
+    default: ''
   workspace:
     description: Workspace root.
     required: false
@@ -31,13 +51,13 @@ runs:
   using: composite
   steps:
     - name: Setup .NET from global.json
-      if: inputs.dotnet-version == '' && inputs.global-json-file != ''
+      if: inputs.global-json-file != ''
       uses: actions/setup-dotnet@v5
       with:
         global-json-file: ${{ inputs.global-json-file }}
 
     - name: Setup .NET from version
-      if: inputs.dotnet-version != ''
+      if: inputs.global-json-file == '' && inputs.dotnet-version != ''
       uses: actions/setup-dotnet@v5
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
@@ -52,13 +72,51 @@ runs:
       shell: bash
       env:
         DOTNET_NX_TOOL_VERSION: ${{ inputs.tool-version }}
+        DOTNET_NX_TOOL_PACKAGE_ID: ${{ inputs.tool-package-id }}
+        DOTNET_NX_TOOL_SOURCE: ${{ inputs.tool-source }}
+        DOTNET_NX_TOOL_SOURCE_NAME: ${{ inputs.tool-source-name }}
+        DOTNET_NX_TOOL_SOURCE_USERNAME: ${{ inputs.tool-source-username || github.repository_owner }}
+        DOTNET_NX_TOOL_SOURCE_TOKEN: ${{ inputs.github-token || github.token }}
       run: |
         set -euo pipefail
-        if [[ -n "$DOTNET_NX_TOOL_VERSION" ]]; then
-          dotnet tool update --global DotnetNx.Tool --version "$DOTNET_NX_TOOL_VERSION"
-        else
-          dotnet tool update --global DotnetNx.Tool
+        config_args=()
+
+        if [[ -n "$DOTNET_NX_TOOL_SOURCE" ]]; then
+          config_dir="$(mktemp -d)"
+          trap 'rm -rf "$config_dir"' EXIT
+          dotnet new nugetconfig --output "$config_dir" >/dev/null
+          config_file="$config_dir/NuGet.config"
+
+          add_source_args=(
+            nuget add source "$DOTNET_NX_TOOL_SOURCE"
+            --name "$DOTNET_NX_TOOL_SOURCE_NAME"
+            --configfile "$config_file"
+          )
+          if [[ -n "$DOTNET_NX_TOOL_SOURCE_TOKEN" ]]; then
+            add_source_args+=(
+              --username "$DOTNET_NX_TOOL_SOURCE_USERNAME"
+              --password "$DOTNET_NX_TOOL_SOURCE_TOKEN"
+              --store-password-in-clear-text
+            )
+          fi
+          dotnet "${add_source_args[@]}" >/dev/null
+          config_args=(--configfile "$config_file")
         fi
+
+        install_args=(tool update --global "$DOTNET_NX_TOOL_PACKAGE_ID")
+        if [[ -n "$DOTNET_NX_TOOL_VERSION" ]]; then
+          install_args+=(--version "$DOTNET_NX_TOOL_VERSION")
+        fi
+        if [[ ${#config_args[@]} -gt 0 ]]; then
+          install_args+=("${config_args[@]}")
+        fi
+        dotnet "${install_args[@]}"
+
+        tools_dir="$HOME/.dotnet/tools"
+        if [[ -n "${GITHUB_PATH:-}" ]]; then
+          echo "$tools_dir" >> "$GITHUB_PATH"
+        fi
+        export PATH="$tools_dir:$PATH"
 
     - name: Export resolver environment
       shell: bash

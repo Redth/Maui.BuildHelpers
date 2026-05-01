@@ -1,0 +1,158 @@
+name: DotnetNx affected matrix
+description: Compute affected project lists and an OS-tagged matrix for DotnetNx/Nx workflows.
+
+inputs:
+  workspace:
+    description: Workspace root.
+    required: false
+    default: '.'
+  base:
+    description: Base commit SHA. Defaults to PR base or previous push SHA.
+    required: false
+    default: ''
+  head:
+    description: Head commit SHA. Defaults to github.sha.
+    required: false
+    default: ''
+  artifact-directory:
+    description: Directory where affected JSON artifacts are written.
+    required: false
+    default: artifacts/nx
+
+outputs:
+  base:
+    description: Resolved base SHA.
+    value: ${{ steps.range.outputs.base }}
+  head:
+    description: Resolved head SHA.
+    value: ${{ steps.range.outputs.head }}
+  matrix:
+    description: JSON matrix with entries for OS tags that have affected projects.
+    value: ${{ steps.summary.outputs.matrix }}
+  has-work:
+    description: true when any OS tag has affected projects.
+    value: ${{ steps.summary.outputs.has-work }}
+  has-linux:
+    description: true when Linux has affected projects.
+    value: ${{ steps.summary.outputs.has-linux }}
+  has-macos:
+    description: true when macOS has affected projects.
+    value: ${{ steps.summary.outputs.has-macos }}
+  has-windows:
+    description: true when Windows has affected projects.
+    value: ${{ steps.summary.outputs.has-windows }}
+  linux-count:
+    description: Number of Linux-routed affected projects.
+    value: ${{ steps.summary.outputs.linux-count }}
+  macos-count:
+    description: Number of macOS-routed affected projects.
+    value: ${{ steps.summary.outputs.macos-count }}
+  windows-count:
+    description: Number of Windows-routed affected projects.
+    value: ${{ steps.summary.outputs.windows-count }}
+  linux-projects-json:
+    description: JSON array of Linux-routed affected projects.
+    value: ${{ steps.summary.outputs.linux-projects-json }}
+  macos-projects-json:
+    description: JSON array of macOS-routed affected projects.
+    value: ${{ steps.summary.outputs.macos-projects-json }}
+  windows-projects-json:
+    description: JSON array of Windows-routed affected projects.
+    value: ${{ steps.summary.outputs.windows-projects-json }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute affected range
+      id: range
+      shell: bash
+      env:
+        BASE_INPUT: ${{ inputs.base }}
+        HEAD_INPUT: ${{ inputs.head }}
+        GITHUB_BASE_INPUT: ${{ github.event.pull_request.base.sha || github.event.before }}
+        GITHUB_HEAD_INPUT: ${{ github.sha }}
+      run: |
+        set -euo pipefail
+        base="${BASE_INPUT:-$GITHUB_BASE_INPUT}"
+        head="${HEAD_INPUT:-$GITHUB_HEAD_INPUT}"
+        if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+          base="$(git rev-parse "${head}~1" 2>/dev/null || echo "$head")"
+        fi
+        echo "base=$base" >> "$GITHUB_OUTPUT"
+        echo "head=$head" >> "$GITHUB_OUTPUT"
+
+    - name: Compute OS affected lists
+      shell: bash
+      working-directory: ${{ inputs.workspace }}
+      run: |
+        set -euo pipefail
+        mkdir -p "${{ inputs.artifact-directory }}"
+        for os_tag in linux macos windows; do
+          nxdn show-projects -- \
+            --affected \
+            --base="${{ steps.range.outputs.base }}" \
+            --head="${{ steps.range.outputs.head }}" \
+            --projects="tag:os:${os_tag}" \
+            --json > "${{ inputs.artifact-directory }}/affected-${os_tag}.json"
+        done
+
+    - name: Summarize OS affected matrix
+      id: summary
+      shell: bash
+      working-directory: ${{ inputs.workspace }}
+      env:
+        ARTIFACT_DIRECTORY: ${{ inputs.artifact-directory }}
+      run: |
+        set -euo pipefail
+        node <<'JS'
+        const fs = require('fs');
+        const oses = ['linux', 'macos', 'windows'];
+        const output = process.env.GITHUB_OUTPUT;
+        const summary = process.env.GITHUB_STEP_SUMMARY;
+        const dir = process.env.ARTIFACT_DIRECTORY;
+        const rows = [];
+
+        function readProjects(os) {
+          const file = `${dir}/affected-${os}.json`;
+          const raw = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : '[]';
+          const parsed = raw ? JSON.parse(raw) : [];
+          return (Array.isArray(parsed) ? parsed : Object.keys(parsed)).sort();
+        }
+
+        const projectsByOs = Object.fromEntries(oses.map(os => [os, readProjects(os)]));
+        const matrix = {
+          include: oses
+            .filter(os => projectsByOs[os].length > 0)
+            .map(os => ({
+              os,
+              osTag: os,
+              runner: os === 'windows' ? 'windows-latest' : os === 'macos' ? 'macos-latest' : 'ubuntu-latest',
+              projects: projectsByOs[os],
+              count: projectsByOs[os].length,
+            })),
+        };
+
+        function writeOutput(name, value) {
+          fs.appendFileSync(output, `${name}=${value}\n`);
+        }
+
+        writeOutput('matrix', JSON.stringify(matrix));
+        writeOutput('has-work', matrix.include.length > 0 ? 'true' : 'false');
+        for (const os of oses) {
+          writeOutput(`has-${os}`, projectsByOs[os].length > 0 ? 'true' : 'false');
+          writeOutput(`${os}-count`, String(projectsByOs[os].length));
+          writeOutput(`${os}-projects-json`, JSON.stringify(projectsByOs[os]));
+          rows.push(`| ${os} | ${projectsByOs[os].length} | ${projectsByOs[os].map(p => `\`${p}\``).join('<br>') || '_None_'} |`);
+        }
+
+        if (summary) {
+          fs.appendFileSync(summary, [
+            '## DotnetNx affected matrix',
+            '',
+            '| OS tag | Count | Projects |',
+            '| --- | ---: | --- |',
+            ...rows,
+            '',
+          ].join('\n'));
+        }
+        JS
