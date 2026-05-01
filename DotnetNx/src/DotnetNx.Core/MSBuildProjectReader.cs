@@ -25,10 +25,18 @@ internal static class MSBuildProjectReader
         return new MSBuildProjectEvaluation(
             GetProperty(project, "NxBuildableOn"),
             GetProperty(project, "NxTags"),
+            project.GetPropertyValue("TargetFramework"),
+            project.GetPropertyValue("TargetFrameworkIdentifier"),
+            project.GetPropertyValue("TargetFrameworkVersion"),
+            project.GetPropertyValue("TargetFrameworkProfile"),
+            project.GetPropertyValue("TargetPlatformIdentifier"),
+            project.GetPropertyValue("TargetPlatformVersion"),
             project.GetPropertyValue("IsTestProject"),
             project.GetPropertyValue("IsPackable"),
             project.GetPropertyValue("PackAsTool"),
             project.GetPropertyValue("UseMaui"),
+            project.GetPropertyValue("PackageId"),
+            project.GetPropertyValue("AssemblyName"),
             project.GetItems("NxTag")
                 .Select(item => new MSBuildItemValue(item.EvaluatedInclude, item.Xml?.Location.File))
                 .ToArray());
@@ -68,8 +76,16 @@ internal sealed record MSBuildItemValue(string Value, string? SourceFile);
 internal sealed record MSBuildProjectEvaluation(
     MSBuildPropertyValue NxBuildableOn,
     MSBuildPropertyValue NxTags,
+    string TargetFramework,
+    string TargetFrameworkIdentifier,
+    string TargetFrameworkVersion,
+    string TargetFrameworkProfile,
+    string TargetPlatformIdentifier,
+    string TargetPlatformVersion,
     string IsTestProject,
     string IsPackable,
     string PackAsTool,
     string UseMaui,
+    string PackageId,
+    string AssemblyName,
     IReadOnlyList<MSBuildItemValue> NxTagItems);

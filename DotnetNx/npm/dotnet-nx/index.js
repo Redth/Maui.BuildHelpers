@@ -44,6 +44,7 @@ function toNxNode(project) {
           tags: project.tags,
           metadata: {
             dotnetNx: {
+              packageIds: project.packageIds || [],
               buildableOn: project.buildableOn,
               explicitTags: project.explicitTags || [],
               inferredTags: project.inferredTags || [],

@@ -16,48 +16,33 @@ internal static class NxTags
         return tags.ToArray();
     }
 
-    public static IReadOnlyList<string> InferFromTargetFramework(string targetFramework)
+    public static IReadOnlyList<string> InferFromTargetFramework(MSBuildProjectEvaluation evaluation)
     {
-        if (string.IsNullOrWhiteSpace(targetFramework))
+        if (string.IsNullOrWhiteSpace(evaluation.TargetFramework))
         {
             return [];
         }
 
-        var normalized = targetFramework.Trim().ToLowerInvariant();
-        var tags = new SortedSet<string>(StringComparer.Ordinal)
+        var tags = new SortedSet<string>(StringComparer.Ordinal);
+        var parts = TargetFrameworkPartsParser.FromEvaluation(evaluation);
+        if (parts is null)
         {
-            $"tfm:{normalized}",
-        };
-
-        if (normalized.Contains("-android", StringComparison.Ordinal))
-        {
-            tags.Add("platform:android");
+            tags.Add($"tfm:{TargetFrameworkPartsParser.NormalizeTagValue(evaluation.TargetFramework)}");
+            return tags.ToArray();
         }
 
-        if (normalized.Contains("-ios", StringComparison.Ordinal))
+        tags.Add($"tfm:{parts.ShortName}");
+        AddTag(tags, "tfm-framework", parts.Framework);
+        AddTag(tags, "tfm-framework-version", parts.FrameworkVersion);
+
+        AddTag(tags, "tfm-profile", parts.Profile);
+        if (!string.IsNullOrWhiteSpace(parts.Platform))
         {
-            tags.Add("platform:ios");
+            tags.Add($"platform:{parts.Platform}");
+            tags.Add($"tfm-platform:{parts.Platform}");
         }
 
-        if (normalized.Contains("-maccatalyst", StringComparison.Ordinal))
-        {
-            tags.Add("platform:maccatalyst");
-        }
-
-        if (normalized.Contains("-tvos", StringComparison.Ordinal))
-        {
-            tags.Add("platform:tvos");
-        }
-
-        if (normalized.Contains("-macos", StringComparison.Ordinal))
-        {
-            tags.Add("platform:macos");
-        }
-
-        if (normalized.Contains("-windows", StringComparison.Ordinal))
-        {
-            tags.Add("platform:windows");
-        }
+        AddTag(tags, "tfm-platform-version", parts.PlatformVersion);
 
         return tags.ToArray();
     }
@@ -75,6 +60,13 @@ internal static class NxTags
             tags.Add("type:packable");
         }
 
+        var packageId = GetPackageId(evaluation);
+        if (IsTrue(evaluation.IsPackable) || packageId is not null)
+        {
+            tags.Add("type:nuget");
+            AddTag(tags, "package-id", packageId);
+        }
+
         if (IsTrue(evaluation.PackAsTool))
         {
             tags.Add("type:tool");
@@ -88,6 +80,12 @@ internal static class NxTags
         return tags.ToArray();
     }
 
+    public static string? GetPackageId(MSBuildProjectEvaluation evaluation) =>
+        TargetFrameworkPartsParser.NormalizeOptionalTagValue(evaluation.PackageId) ??
+        (IsTrue(evaluation.IsPackable)
+            ? TargetFrameworkPartsParser.NormalizeOptionalTagValue(evaluation.AssemblyName)
+            : null);
+
     private static IEnumerable<string> Split(string value) =>
         value
             .Split([';', ',', ' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -96,4 +94,12 @@ internal static class NxTags
     private static bool IsTrue(string value) =>
         string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(value, "1", StringComparison.Ordinal);
+
+    private static void AddTag(ISet<string> tags, string prefix, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            tags.Add($"{prefix}:{value}");
+        }
+    }
 }

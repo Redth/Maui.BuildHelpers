@@ -78,12 +78,13 @@ Use `NxTags` for simple property-based tags and `NxTag` items when item conditio
 `NxTags` and `NxTag` values can be separated with semicolons, commas, whitespace, or newlines. DotnetNx merges those explicit tags with conservative inferred tags:
 
 - `os:<host>` and `os:any` from `NxBuildableOn` or target-framework host inference.
-- `tfm:<target-framework>` for each evaluated target framework.
-- `platform:android`, `platform:ios`, `platform:maccatalyst`, `platform:tvos`, `platform:macos`, or `platform:windows` for platform-specific target frameworks.
-- `type:test`, `type:packable`, and `type:tool` from `IsTestProject`, `IsPackable`, and `PackAsTool`.
+- `tfm:<target-framework>`, `tfm-framework:<framework>`, and `tfm-framework-version:<version>` from MSBuild's evaluated target framework parts.
+- `platform:<platform>`, `tfm-platform:<platform>`, and `tfm-platform-version:<version>` for platform-specific target frameworks.
+- `type:test`, `type:packable`, `type:nuget`, and `type:tool` from `IsTestProject`, `IsPackable`, `PackageId`, and `PackAsTool`.
+- `package-id:<id>` from the MSBuild `PackageId` used for packable NuGet projects, falling back to `AssemblyName` when `PackageId` is not set.
 - `sdk:maui` when `UseMaui` evaluates to `true`.
 
-The Nx plugin writes the merged list to the standard Nx `tags` field. It also includes provenance under `metadata.dotnetNx.explicitTags` and `metadata.dotnetNx.inferredTags` for diagnostics and custom tooling.
+The Nx plugin writes the merged list to the standard Nx `tags` field. It also includes provenance under `metadata.dotnetNx.explicitTags`, `metadata.dotnetNx.inferredTags`, and `metadata.dotnetNx.packageIds` for diagnostics and custom tooling.
 
 ## `nxdn`
 

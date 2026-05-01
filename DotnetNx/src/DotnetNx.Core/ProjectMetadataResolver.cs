@@ -45,6 +45,7 @@ public sealed class ProjectMetadataResolver
         var buildableOn = new SortedSet<string>(StringComparer.Ordinal);
         var explicitTags = new SortedSet<string>(StringComparer.Ordinal);
         var inferredTags = new SortedSet<string>(StringComparer.Ordinal);
+        var packageIds = new SortedSet<string>(StringComparer.Ordinal);
         string resolution = "inferred";
         string? sourceFile = null;
 
@@ -59,8 +60,12 @@ public sealed class ProjectMetadataResolver
                 var evaluation = MSBuildProjectReader.Evaluate(projectFile, targetFramework);
                 explicitTags.UnionWith(NxTags.Normalize([evaluation.NxTags.Value]));
                 explicitTags.UnionWith(NxTags.Normalize(evaluation.NxTagItems.Select(item => item.Value)));
-                inferredTags.UnionWith(NxTags.InferFromTargetFramework(targetFramework));
+                inferredTags.UnionWith(NxTags.InferFromTargetFramework(evaluation));
                 inferredTags.UnionWith(NxTags.InferFromProjectProperties(evaluation));
+                if (NxTags.GetPackageId(evaluation) is { } packageId)
+                {
+                    packageIds.Add(packageId);
+                }
 
                 var buildableOnProperty = evaluation.NxBuildableOn;
                 if (!string.IsNullOrWhiteSpace(buildableOnProperty.Value))
@@ -81,7 +86,7 @@ public sealed class ProjectMetadataResolver
                 }
                 else if (!string.IsNullOrWhiteSpace(targetFramework))
                 {
-                    buildableOn.UnionWith(HostOperatingSystems.InferFromTargetFramework(targetFramework));
+                    buildableOn.UnionWith(HostOperatingSystems.InferFromTargetPlatform(evaluation.TargetPlatformIdentifier));
                 }
             }
 
@@ -109,6 +114,7 @@ public sealed class ProjectMetadataResolver
             relativeProjectFile.Replace('\\', '/'),
             relativeProjectRoot,
             Path.GetFileNameWithoutExtension(projectFile),
+            packageIds.ToArray(),
             normalized,
             explicitTags.ToArray(),
             inferredTags.ToArray(),
