@@ -13,4 +13,8 @@
     <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="DotnetNx.Core.Tests" />
+  </ItemGroup>
+
 </Project>

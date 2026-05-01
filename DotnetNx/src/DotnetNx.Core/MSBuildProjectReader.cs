@@ -18,14 +18,20 @@ internal static class MSBuildProjectReader
         return string.IsNullOrWhiteSpace(targetFramework) ? [] : [targetFramework];
     }
 
-    public static MSBuildPropertyValue GetProperty(string projectFile, string propertyName, string? targetFramework)
+    public static MSBuildProjectEvaluation Evaluate(string projectFile, string? targetFramework)
     {
         using var collection = CreateProjectCollection(targetFramework);
         var project = new Project(projectFile, collection.GlobalProperties, toolsVersion: null, collection);
-        var property = project.GetProperty(propertyName);
-        return new MSBuildPropertyValue(
-            property?.EvaluatedValue ?? string.Empty,
-            property?.Xml?.Location.File);
+        return new MSBuildProjectEvaluation(
+            GetProperty(project, "NxBuildableOn"),
+            GetProperty(project, "NxTags"),
+            project.GetPropertyValue("IsTestProject"),
+            project.GetPropertyValue("IsPackable"),
+            project.GetPropertyValue("PackAsTool"),
+            project.GetPropertyValue("UseMaui"),
+            project.GetItems("NxTag")
+                .Select(item => new MSBuildItemValue(item.EvaluatedInclude, item.Xml?.Location.File))
+                .ToArray());
     }
 
     private static string[] SplitPropertyList(string value) =>
@@ -45,6 +51,25 @@ internal static class MSBuildProjectReader
 
         return new ProjectCollection(globalProperties);
     }
+
+    private static MSBuildPropertyValue GetProperty(Project project, string propertyName)
+    {
+        var property = project.GetProperty(propertyName);
+        return new MSBuildPropertyValue(
+            property?.EvaluatedValue ?? string.Empty,
+            property?.Xml?.Location.File);
+    }
 }
 
 internal sealed record MSBuildPropertyValue(string Value, string? SourceFile);
+
+internal sealed record MSBuildItemValue(string Value, string? SourceFile);
+
+internal sealed record MSBuildProjectEvaluation(
+    MSBuildPropertyValue NxBuildableOn,
+    MSBuildPropertyValue NxTags,
+    string IsTestProject,
+    string IsPackable,
+    string PackAsTool,
+    string UseMaui,
+    IReadOnlyList<MSBuildItemValue> NxTagItems);

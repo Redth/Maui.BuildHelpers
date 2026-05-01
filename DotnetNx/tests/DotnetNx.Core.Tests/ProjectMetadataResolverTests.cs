@@ -32,9 +32,66 @@ public sealed class ProjectMetadataResolverTests
         var project = Assert.Single(metadata.Projects);
         Assert.Equal("src/App/App.csproj", project.ProjectFile);
         Assert.Equal(["macos"], project.BuildableOn);
-        Assert.Equal(["os:macos"], project.Tags);
+        Assert.Empty(project.ExplicitTags);
+        Assert.Contains("os:macos", project.InferredTags);
+        Assert.Contains("os:macos", project.Tags);
         Assert.Equal("explicit", project.Resolution);
         Assert.Empty(metadata.Diagnostics);
+    }
+
+    [Fact]
+    public void ResolveWorkspace_exposes_explicit_and_inferred_tags()
+    {
+        using var workspace = TemporaryWorkspace.Create();
+        workspace.Write(
+            "src/Tests/Tests.csproj",
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <IsPackable>false</IsPackable>
+                <IsTestProject>true</IsTestProject>
+                <NxTags>scope:maui; type:integration-test
+                  device:android</NxTags>
+              </PropertyGroup>
+              <ItemGroup>
+                <NxTag Include="owner:devflow" />
+                <NxTag Include="requires:emulator" Condition="'$(TargetFramework)' == 'net10.0'" />
+              </ItemGroup>
+            </Project>
+            """);
+
+        var metadata = new ProjectMetadataResolver().ResolveWorkspace(workspace.Root);
+
+        var project = Assert.Single(metadata.Projects);
+        Assert.Equal(
+            ["device:android", "owner:devflow", "requires:emulator", "scope:maui", "type:integration-test"],
+            project.ExplicitTags);
+        Assert.Contains("os:any", project.InferredTags);
+        Assert.Contains("os:linux", project.InferredTags);
+        Assert.Contains("os:macos", project.InferredTags);
+        Assert.Contains("os:windows", project.InferredTags);
+        Assert.Contains("tfm:net10.0", project.InferredTags);
+        Assert.Contains("type:test", project.InferredTags);
+        Assert.Contains("requires:emulator", project.Tags);
+        Assert.Contains("tfm:net10.0", project.Tags);
+        Assert.Contains("type:test", project.Tags);
+        Assert.Empty(metadata.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("net10.0-android", "platform:android")]
+    [InlineData("net10.0-ios", "platform:ios")]
+    [InlineData("net10.0-maccatalyst", "platform:maccatalyst")]
+    [InlineData("net10.0-tvos", "platform:tvos")]
+    [InlineData("net10.0-macos", "platform:macos")]
+    [InlineData("net10.0-windows10.0.19041.0", "platform:windows")]
+    public void InferFromTargetFramework_adds_platform_tags(string targetFramework, string expectedTag)
+    {
+        var tags = NxTags.InferFromTargetFramework(targetFramework);
+
+        Assert.Contains(expectedTag, tags);
+        Assert.Contains($"tfm:{targetFramework.ToLowerInvariant()}", tags);
     }
 
     [Fact]

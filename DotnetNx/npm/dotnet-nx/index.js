@@ -45,6 +45,8 @@ function toNxNode(project) {
           metadata: {
             dotnetNx: {
               buildableOn: project.buildableOn,
+              explicitTags: project.explicitTags || [],
+              inferredTags: project.inferredTags || [],
               resolution: project.resolution,
               sourceFile: project.sourceFile,
               targetFrameworks: project.targetFrameworks,

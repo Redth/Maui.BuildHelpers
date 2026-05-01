@@ -5,6 +5,8 @@ public sealed record ProjectHostMetadata(
     string ProjectRoot,
     string ProjectName,
     IReadOnlyList<string> BuildableOn,
+    IReadOnlyList<string> ExplicitTags,
+    IReadOnlyList<string> InferredTags,
     IReadOnlyList<string> Tags,
     string Resolution,
     string? SourceFile,

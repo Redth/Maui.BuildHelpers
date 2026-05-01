@@ -43,6 +43,8 @@ public sealed class ProjectMetadataResolver
         var diagnostics = new List<DotnetNxDiagnostic>();
         var targetFrameworks = Array.Empty<string>();
         var buildableOn = new SortedSet<string>(StringComparer.Ordinal);
+        var explicitTags = new SortedSet<string>(StringComparer.Ordinal);
+        var inferredTags = new SortedSet<string>(StringComparer.Ordinal);
         string resolution = "inferred";
         string? sourceFile = null;
 
@@ -54,7 +56,13 @@ public sealed class ProjectMetadataResolver
 
             foreach (var targetFramework in evaluationFrameworks)
             {
-                var buildableOnProperty = MSBuildProjectReader.GetProperty(projectFile, "NxBuildableOn", targetFramework);
+                var evaluation = MSBuildProjectReader.Evaluate(projectFile, targetFramework);
+                explicitTags.UnionWith(NxTags.Normalize([evaluation.NxTags.Value]));
+                explicitTags.UnionWith(NxTags.Normalize(evaluation.NxTagItems.Select(item => item.Value)));
+                inferredTags.UnionWith(NxTags.InferFromTargetFramework(targetFramework));
+                inferredTags.UnionWith(NxTags.InferFromProjectProperties(evaluation));
+
+                var buildableOnProperty = evaluation.NxBuildableOn;
                 if (!string.IsNullOrWhiteSpace(buildableOnProperty.Value))
                 {
                     var invalidValues = HostOperatingSystems.GetInvalidValues(buildableOnProperty.Value);
@@ -92,6 +100,8 @@ public sealed class ProjectMetadataResolver
         }
 
         var normalized = HostOperatingSystems.Normalize(buildableOn);
+        inferredTags.UnionWith(HostOperatingSystems.ToTags(normalized.ToArray()));
+        var finalTags = NxTags.Normalize(explicitTags.Concat(inferredTags));
         var relativeProjectFile = Path.GetRelativePath(workspaceRoot, projectFile);
         var relativeProjectRoot = Path.GetDirectoryName(relativeProjectFile)?.Replace('\\', '/') ?? ".";
 
@@ -100,7 +110,9 @@ public sealed class ProjectMetadataResolver
             relativeProjectRoot,
             Path.GetFileNameWithoutExtension(projectFile),
             normalized,
-            HostOperatingSystems.ToTags(normalized.ToArray()),
+            explicitTags.ToArray(),
+            inferredTags.ToArray(),
+            finalTags,
             resolution,
             sourceFile is null ? null : Path.GetRelativePath(workspaceRoot, sourceFile).Replace('\\', '/'),
             targetFrameworks,
