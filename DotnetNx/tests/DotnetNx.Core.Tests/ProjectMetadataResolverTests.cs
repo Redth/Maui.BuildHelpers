@@ -32,9 +32,110 @@ public sealed class ProjectMetadataResolverTests
         var project = Assert.Single(metadata.Projects);
         Assert.Equal("src/App/App.csproj", project.ProjectFile);
         Assert.Equal(["macos"], project.BuildableOn);
-        Assert.Equal(["os:macos"], project.Tags);
+        Assert.Empty(project.ExplicitTags);
+        Assert.Contains("os:macos", project.InferredTags);
+        Assert.Contains("os:macos", project.Tags);
         Assert.Equal("explicit", project.Resolution);
         Assert.Empty(metadata.Diagnostics);
+    }
+
+    [Fact]
+    public void ResolveWorkspace_exposes_explicit_and_inferred_tags()
+    {
+        using var workspace = TemporaryWorkspace.Create();
+        workspace.Write(
+            "src/Tests/Tests.csproj",
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <IsPackable>false</IsPackable>
+                <IsTestProject>true</IsTestProject>
+                <NxTags>scope:maui; type:integration-test
+                  device:android</NxTags>
+              </PropertyGroup>
+              <ItemGroup>
+                <NxTag Include="owner:devflow" />
+                <NxTag Include="requires:emulator" Condition="'$(TargetFramework)' == 'net10.0'" />
+              </ItemGroup>
+            </Project>
+            """);
+
+        var metadata = new ProjectMetadataResolver().ResolveWorkspace(workspace.Root);
+
+        var project = Assert.Single(metadata.Projects);
+        Assert.Equal(
+            ["device:android", "owner:devflow", "requires:emulator", "scope:maui", "type:integration-test"],
+            project.ExplicitTags);
+        Assert.Contains("os:any", project.InferredTags);
+        Assert.Contains("os:linux", project.InferredTags);
+        Assert.Contains("os:macos", project.InferredTags);
+        Assert.Contains("os:windows", project.InferredTags);
+        Assert.Contains("tfm:net10.0", project.InferredTags);
+        Assert.Contains("tfm-framework:netcoreapp", project.InferredTags);
+        Assert.Contains("tfm-framework-version:10.0", project.InferredTags);
+        Assert.Contains("type:test", project.InferredTags);
+        Assert.Contains("requires:emulator", project.Tags);
+        Assert.Contains("tfm:net10.0", project.Tags);
+        Assert.Contains("type:test", project.Tags);
+        Assert.Empty(metadata.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("net10.0-android35.0", "platform:android", "tfm-platform-version:35.0")]
+    [InlineData("net10.0-ios18.0", "platform:ios", "tfm-platform-version:18.0")]
+    [InlineData("net10.0-maccatalyst18.0", "platform:maccatalyst", "tfm-platform-version:18.0")]
+    [InlineData("net10.0-tvos18.0", "platform:tvos", "tfm-platform-version:18.0")]
+    [InlineData("net10.0-macos15.0", "platform:macos", "tfm-platform-version:15.0")]
+    [InlineData("net10.0-windows10.0.19041.0", "platform:windows", "tfm-platform-version:10.0.19041.0")]
+    public void InferFromTargetFramework_adds_parsed_tfm_part_tags(string targetFramework, string expectedTag, string expectedVersionTag)
+    {
+        var tags = NxTags.InferFromTargetFramework(CreateEvaluation(
+            targetFramework,
+            targetPlatformIdentifier: expectedTag["platform:".Length..],
+            targetPlatformVersion: expectedVersionTag["tfm-platform-version:".Length..]));
+
+        Assert.Contains(expectedTag, tags);
+        Assert.Contains(expectedTag.Replace("platform:", "tfm-platform:"), tags);
+        Assert.Contains(expectedVersionTag, tags);
+        Assert.Contains($"tfm:{targetFramework.ToLowerInvariant()}", tags);
+        Assert.Contains("tfm-framework:netcoreapp", tags);
+        Assert.Contains("tfm-framework-version:10.0", tags);
+    }
+
+    [Theory]
+    [InlineData("ios")]
+    [InlineData("maccatalyst")]
+    [InlineData("tvos")]
+    [InlineData("macos")]
+    public void InferFromTargetFramework_routes_apple_tfms_to_macos(string platform)
+    {
+        Assert.Equal(["macos"], HostOperatingSystems.InferFromTargetPlatform(platform));
+    }
+
+    [Fact]
+    public void ResolveWorkspace_infers_package_tags_from_msbuild_package_id()
+    {
+        using var workspace = TemporaryWorkspace.Create();
+        workspace.Write(
+            "src/Packable/Packable.csproj",
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <IsPackable>true</IsPackable>
+                <PackageId>Contoso.Widget</PackageId>
+              </PropertyGroup>
+            </Project>
+            """);
+
+        var metadata = new ProjectMetadataResolver().ResolveWorkspace(workspace.Root);
+
+        var project = Assert.Single(metadata.Projects);
+        Assert.Equal(["contoso.widget"], project.PackageIds);
+        Assert.Contains("package-id:contoso.widget", project.InferredTags);
+        Assert.Contains("type:nuget", project.InferredTags);
+        Assert.Contains("type:packable", project.InferredTags);
     }
 
     [Fact]
@@ -59,6 +160,27 @@ public sealed class ProjectMetadataResolverTests
             diagnostic.Severity == DotnetNxDiagnosticSeverity.Error);
         Assert.Single(metadata.Diagnostics, diagnostic => diagnostic.Code == "DNX001");
     }
+
+    private static MSBuildProjectEvaluation CreateEvaluation(
+        string targetFramework,
+        string targetPlatformIdentifier = "",
+        string targetPlatformVersion = "") =>
+        new(
+            new MSBuildPropertyValue(string.Empty, null),
+            new MSBuildPropertyValue(string.Empty, null),
+            targetFramework,
+            ".NETCoreApp",
+            "v10.0",
+            string.Empty,
+            targetPlatformIdentifier,
+            targetPlatformVersion,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            []);
 
     private sealed class TemporaryWorkspace : IDisposable
     {

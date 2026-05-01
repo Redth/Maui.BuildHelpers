@@ -5,14 +5,14 @@ namespace DotnetNx.Core.Tests;
 public sealed class HostOperatingSystemsTests
 {
     [Theory]
-    [InlineData("net10.0-ios", "macos")]
-    [InlineData("net10.0-maccatalyst", "macos")]
-    [InlineData("net10.0-tvos", "macos")]
-    [InlineData("net10.0-macos", "macos")]
-    [InlineData("net10.0-windows10.0.19041.0", "windows")]
-    public void InferFromTargetFramework_routes_platform_tfms_to_required_host(string targetFramework, string expectedHost)
+    [InlineData("ios", "macos")]
+    [InlineData("maccatalyst", "macos")]
+    [InlineData("tvos", "macos")]
+    [InlineData("macos", "macos")]
+    [InlineData("windows", "windows")]
+    public void InferFromTargetPlatform_routes_platform_tfms_to_required_host(string platform, string expectedHost)
     {
-        Assert.Equal([expectedHost], HostOperatingSystems.InferFromTargetFramework(targetFramework));
+        Assert.Equal([expectedHost], HostOperatingSystems.InferFromTargetPlatform(platform));
     }
 
     [Fact]

@@ -57,6 +57,35 @@ When `NxBuildableOn` is unset, DotnetNx evaluates target frameworks and infers i
 
 Unlike the trial JavaScript plugin, this is based on MSBuild evaluation, so values imported from `Directory.Build.props`, package props, SDK props, and conditional property groups are resolved through MSBuild.
 
+## Nx tags from MSBuild
+
+DotnetNx also exposes generic Nx tags from MSBuild so repositories can filter affected work without duplicating project metadata in JavaScript or `nx.json`.
+
+Use `NxTags` for simple property-based tags and `NxTag` items when item conditions are more convenient:
+
+```xml
+<PropertyGroup>
+  <NxBuildableOn>macos;windows</NxBuildableOn>
+  <NxTags>scope:maui;type:integration-test;device:android</NxTags>
+</PropertyGroup>
+
+<ItemGroup>
+  <NxTag Include="owner:devflow" />
+  <NxTag Include="requires:emulator" Condition="'$(TargetFramework)' == 'net10.0-android'" />
+</ItemGroup>
+```
+
+`NxTags` and `NxTag` values can be separated with semicolons, commas, whitespace, or newlines. DotnetNx merges those explicit tags with conservative inferred tags:
+
+- `os:<host>` and `os:any` from `NxBuildableOn` or target-framework host inference.
+- `tfm:<target-framework>`, `tfm-framework:<framework>`, and `tfm-framework-version:<version>` from MSBuild's evaluated target framework parts.
+- `platform:<platform>`, `tfm-platform:<platform>`, and `tfm-platform-version:<version>` for platform-specific target frameworks.
+- `type:test`, `type:packable`, `type:nuget`, and `type:tool` from `IsTestProject`, `IsPackable`, `PackageId`, and `PackAsTool`.
+- `package-id:<id>` from the MSBuild `PackageId` used for packable NuGet projects, falling back to `AssemblyName` when `PackageId` is not set.
+- `sdk:maui` when `UseMaui` evaluates to `true`.
+
+The Nx plugin writes the merged list to the standard Nx `tags` field. It also includes provenance under `metadata.dotnetNx.explicitTags`, `metadata.dotnetNx.inferredTags`, and `metadata.dotnetNx.packageIds` for diagnostics and custom tooling.
+
 ## `nxdn`
 
 `nxdn` is a .NET global tool intended to wrap Nx invocation:

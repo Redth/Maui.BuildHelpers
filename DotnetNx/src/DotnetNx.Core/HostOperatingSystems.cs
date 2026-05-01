@@ -56,33 +56,17 @@ public static class HostOperatingSystems
         return invalid.ToArray();
     }
 
-    public static IReadOnlyList<string> InferFromTargetFrameworks(IEnumerable<string> targetFrameworks)
+    public static IReadOnlyList<string> InferFromTargetFrameworks(IEnumerable<string> targetFrameworks) => All;
+
+    public static IReadOnlyList<string> InferFromTargetPlatform(string targetPlatformIdentifier)
     {
-        var values = new SortedSet<string>(StringComparer.Ordinal);
-        var sawTargetFramework = false;
-
-        foreach (var targetFramework in targetFrameworks.Where(value => !string.IsNullOrWhiteSpace(value)))
-        {
-            sawTargetFramework = true;
-            values.UnionWith(InferFromTargetFramework(targetFramework));
-        }
-
-        return sawTargetFramework ? values.ToArray() : All;
-    }
-
-    public static IReadOnlyList<string> InferFromTargetFramework(string targetFramework)
-    {
-        var normalized = targetFramework.Trim().ToLowerInvariant();
-
-        if (normalized.Contains("-ios", StringComparison.Ordinal) ||
-            normalized.Contains("-maccatalyst", StringComparison.Ordinal) ||
-            normalized.Contains("-tvos", StringComparison.Ordinal) ||
-            normalized.Contains("-macos", StringComparison.Ordinal))
+        var platform = TargetFrameworkPartsParser.NormalizeTagValue(targetPlatformIdentifier);
+        if (platform is "ios" or "maccatalyst" or "tvos" or "macos")
         {
             return ["macos"];
         }
 
-        if (normalized.Contains("-windows", StringComparison.Ordinal))
+        if (platform == "windows")
         {
             return ["windows"];
         }
