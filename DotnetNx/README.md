@@ -113,6 +113,11 @@ steps:
     with:
       project: Microsoft.Maui.DevFlow.Agent.IntegrationTests.Android
       target: test
+      env: |
+        TEST_CONFIGURATION=Debug
+      script: |
+        export DEVFLOW_TEST_ANDROID_SERIAL="$(adb devices | awk '/^emulator-[0-9]+[[:space:]]+device$/ { print $1; exit }')"
+        echo "Using Android emulator serial: ${DEVFLOW_TEST_ANDROID_SERIAL:-<none found>}"
 ```
 
 That action runs:
@@ -120,6 +125,11 @@ That action runs:
 ```bash
 nxdn nx -- run Microsoft.Maui.DevFlow.Agent.IntegrationTests.Android:test
 ```
+
+Both `run-target` and `run-affected` accept:
+
+- `env`: multiline `NAME=VALUE` entries exported before `nxdn` runs.
+- `script`: a Bash setup script sourced in the same shell before `nxdn` runs, useful for computed environment values.
 
 ## Publishing
 

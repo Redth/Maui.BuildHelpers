@@ -20,6 +20,14 @@ inputs:
     description: Extra arguments appended to nx run.
     required: false
     default: ''
+  env:
+    description: Multiline KEY=VALUE entries exported before running nxdn.
+    required: false
+    default: ''
+  script:
+    description: Optional Bash setup script sourced before running nxdn. Exported variables remain available to the target.
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -32,8 +40,33 @@ runs:
         DOTNET_NX_TARGET: ${{ inputs.target }}
         DOTNET_NX_CONFIGURATION: ${{ inputs.configuration }}
         DOTNET_NX_EXTRA_ARGS: ${{ inputs.extra-args }}
+        DOTNET_NX_ENV: ${{ inputs.env }}
+        DOTNET_NX_SCRIPT: ${{ inputs.script }}
       run: |
         set -euo pipefail
+        if [[ -n "$DOTNET_NX_ENV" ]]; then
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ "$line" != *=* ]]; then
+              echo "::error::Invalid env entry '$line'. Use NAME=VALUE."
+              exit 1
+            fi
+            name="${line%%=*}"
+            value="${line#*=}"
+            if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+              echo "::error::Invalid env name '$name'."
+              exit 1
+            fi
+            export "$name=$value"
+          done <<< "$DOTNET_NX_ENV"
+        fi
+        if [[ -n "$DOTNET_NX_SCRIPT" ]]; then
+          script_file="$(mktemp)"
+          trap 'rm -f "$script_file"' EXIT
+          printf '%s\n' "$DOTNET_NX_SCRIPT" > "$script_file"
+          # shellcheck source=/dev/null
+          source "$script_file"
+        fi
         run_id="$DOTNET_NX_PROJECT:$DOTNET_NX_TARGET"
         args=(run "$run_id")
         if [[ -n "$DOTNET_NX_CONFIGURATION" ]]; then
