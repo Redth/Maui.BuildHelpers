@@ -1,0 +1,47 @@
+name: DotnetNx run target
+description: Run a single Nx project target through nxdn.
+
+inputs:
+  workspace:
+    description: Workspace root.
+    required: false
+    default: '.'
+  project:
+    description: Nx project name to run.
+    required: true
+  target:
+    description: Nx target to run, such as build, test, pack, or publish.
+    required: true
+  configuration:
+    description: Optional Nx target configuration.
+    required: false
+    default: ''
+  extra-args:
+    description: Extra arguments appended to nx run.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Run project target
+      shell: bash
+      working-directory: ${{ inputs.workspace }}
+      env:
+        DOTNET_NX_PROJECT: ${{ inputs.project }}
+        DOTNET_NX_TARGET: ${{ inputs.target }}
+        DOTNET_NX_CONFIGURATION: ${{ inputs.configuration }}
+        DOTNET_NX_EXTRA_ARGS: ${{ inputs.extra-args }}
+      run: |
+        set -euo pipefail
+        run_id="$DOTNET_NX_PROJECT:$DOTNET_NX_TARGET"
+        args=(run "$run_id")
+        if [[ -n "$DOTNET_NX_CONFIGURATION" ]]; then
+          args+=("--configuration=$DOTNET_NX_CONFIGURATION")
+        fi
+        if [[ -n "$DOTNET_NX_EXTRA_ARGS" ]]; then
+          # shellcheck disable=SC2206
+          extra=( $DOTNET_NX_EXTRA_ARGS )
+          args+=("${extra[@]}")
+        fi
+        nxdn nx -- "${args[@]}"

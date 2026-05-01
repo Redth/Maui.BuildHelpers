@@ -83,6 +83,7 @@ Initial composite actions are provided under `actions/`:
 - `setup-nxdn`: setup .NET/Node, install `DotnetNx.Tool`, and export resolver environment.
 - `affected-info`: compute and summarize affected projects.
 - `run-affected`: run an affected target with optional `os:<host>` filtering.
+- `run-target`: run a specific Nx project target through `nxdn`.
 
 Example workflow shape:
 
@@ -100,6 +101,24 @@ steps:
       base: ${{ steps.affected.outputs.base }}
       head: ${{ steps.affected.outputs.head }}
       os-tag: macos
+```
+
+Run a specific project target when you already know the Nx project and target:
+
+```yaml
+steps:
+  - uses: actions/checkout@v6
+  - uses: ./DotnetNx/actions/setup-nxdn
+  - uses: ./DotnetNx/actions/run-target
+    with:
+      project: Microsoft.Maui.DevFlow.Agent.IntegrationTests.Android
+      target: test
+```
+
+That action runs:
+
+```bash
+nxdn nx -- run Microsoft.Maui.DevFlow.Agent.IntegrationTests.Android:test
 ```
 
 ## Publishing
