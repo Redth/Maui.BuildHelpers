@@ -1,5 +1,7 @@
 # Proposed Nx feature discussion
 
+Published as [nrwl/nx discussion #36676](https://github.com/nrwl/nx/discussions/36676).
+
 ## Title
 
 `@nx/dotnet`: expose structured evaluated MSBuild metadata and framework/RID-specific target variants
@@ -175,3 +177,10 @@ It also helped identify approaches we no longer recommend:
 - Using tags as the source of truth for target behavior.
 
 We would be happy to split this into small contributions against the existing analyzer. Would maintainers prefer to begin with the structured metadata model, `projectType`/technology improvements, or framework/RID-specific target configuration design?
+
+### Related work
+
+- [Discussion #35837](https://github.com/nrwl/nx/discussions/35837) covers current `@nx/dotnet` configuration, output-path, runtime, and restore limitations.
+- [Issue #33474](https://github.com/nrwl/nx/issues/33474) and [PR #33662](https://github.com/nrwl/nx/pull/33662) cover runtime argument forwarding for build and publish.
+- [Discussion #36483](https://github.com/nrwl/nx/discussions/36483) demonstrates target atomization and target-group metadata for .NET tests.
+- [Discussion #36468](https://github.com/nrwl/nx/discussions/36468) and [PR #36469](https://github.com/nrwl/nx/pull/36469) demonstrate richer evaluated MSBuild facts feeding native dependency nodes, cache inputs, and affected traversal.
