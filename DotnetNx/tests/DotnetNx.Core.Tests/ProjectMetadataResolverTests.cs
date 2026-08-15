@@ -5,7 +5,7 @@ namespace DotnetNx.Core.Tests;
 public sealed class ProjectMetadataResolverTests
 {
     [Fact]
-    public void ResolveWorkspace_uses_msbuild_imports_for_nxbuildableon()
+    public void ResolveWorkspace_exposes_structured_metadata_and_explicit_tags()
     {
         using var workspace = TemporaryWorkspace.Create();
         workspace.Write(
@@ -13,7 +13,8 @@ public sealed class ProjectMetadataResolverTests
             """
             <Project>
               <PropertyGroup>
-                <NxBuildableOn>macos</NxBuildableOn>
+                <NxBuildHosts>macos</NxBuildHosts>
+                <NxTags>scope:client;owner:devflow</NxTags>
               </PropertyGroup>
             </Project>
             """);
@@ -22,7 +23,11 @@ public sealed class ProjectMetadataResolverTests
             """
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
-                <TargetFramework>net10.0</TargetFramework>
+                <TargetFramework>net10.0-ios18.0</TargetFramework>
+                <OutputType>Exe</OutputType>
+                <IsPublishable>true</IsPublishable>
+                <RuntimeIdentifier>ios-arm64</RuntimeIdentifier>
+                <UseMaui>true</UseMaui>
               </PropertyGroup>
             </Project>
             """);
@@ -30,17 +35,57 @@ public sealed class ProjectMetadataResolverTests
         var metadata = new ProjectMetadataResolver().ResolveWorkspace(workspace.Root);
 
         var project = Assert.Single(metadata.Projects);
-        Assert.Equal("src/App/App.csproj", project.ProjectFile);
-        Assert.Equal(["macos"], project.BuildableOn);
-        Assert.Empty(project.ExplicitTags);
-        Assert.Contains("os:macos", project.InferredTags);
-        Assert.Contains("os:macos", project.Tags);
-        Assert.Equal("explicit", project.Resolution);
+        Assert.Equal("application", project.ProjectType);
+        Assert.Equal(["dotnet", "C#", "maui"], project.Technologies);
+        Assert.True(project.Capabilities.IsExecutable);
+        Assert.True(project.Capabilities.IsPublishable);
+        Assert.Equal(["owner:devflow", "scope:client"], project.Tags);
+
+        var configuration = Assert.Single(project.Configurations);
+        Assert.Equal("net10.0-ios18.0", configuration.TargetFramework);
+        Assert.Equal("ios", configuration.Framework?.Platform);
+        Assert.Equal("18.0", configuration.Framework?.PlatformVersion);
+        Assert.Equal(["ios-arm64"], configuration.RuntimeIdentifiers);
+
+        var hostRequirement = Assert.Single(project.TargetHostRequirements);
+        Assert.Equal("build", hostRequirement.Target);
+        Assert.Equal(["macos"], hostRequirement.Hosts);
+        Assert.Equal(DotnetMetadataSource.Explicit, hostRequirement.Source);
+        Assert.Equal("Directory.Build.props", hostRequirement.SourceFile);
         Assert.Empty(metadata.Diagnostics);
     }
 
     [Fact]
-    public void ResolveWorkspace_exposes_explicit_and_inferred_tags()
+    public void ResolveWorkspace_keeps_conditioned_tags_at_configuration_scope()
+    {
+        using var workspace = TemporaryWorkspace.Create();
+        workspace.Write(
+            "src/App/App.csproj",
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFrameworks>net10.0;net10.0-android35.0</TargetFrameworks>
+                <NxTags>scope:client</NxTags>
+              </PropertyGroup>
+              <ItemGroup>
+                <NxTag Include="requires:emulator"
+                       Condition="'$(TargetFramework)' == 'net10.0-android35.0'" />
+              </ItemGroup>
+            </Project>
+            """);
+
+        var project = Assert.Single(new ProjectMetadataResolver().ResolveWorkspace(workspace.Root).Projects);
+
+        Assert.Equal(["scope:client"], project.ExplicitTags);
+        Assert.Equal(["scope:client"], project.Tags);
+        var managed = Assert.Single(project.Configurations, configuration => configuration.TargetFramework == "net10.0");
+        var android = Assert.Single(project.Configurations, configuration => configuration.TargetFramework == "net10.0-android35.0");
+        Assert.Equal(["scope:client"], managed.ExplicitTags);
+        Assert.Equal(["requires:emulator", "scope:client"], android.ExplicitTags);
+    }
+
+    [Fact]
+    public void ResolveWorkspace_infers_capabilities_without_turning_them_into_tags()
     {
         using var workspace = TemporaryWorkspace.Create();
         workspace.Write(
@@ -49,97 +94,69 @@ public sealed class ProjectMetadataResolverTests
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
                 <TargetFramework>net10.0</TargetFramework>
-                <IsPackable>false</IsPackable>
-                <IsTestProject>true</IsTestProject>
-                <NxTags>scope:maui; type:integration-test
-                  device:android</NxTags>
+                <IsPackable>true</IsPackable>
+                <PackageId>Contoso.Tests</PackageId>
+                <PackAsTool>true</PackAsTool>
               </PropertyGroup>
               <ItemGroup>
-                <NxTag Include="owner:devflow" />
-                <NxTag Include="requires:emulator" Condition="'$(TargetFramework)' == 'net10.0'" />
+                <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />
               </ItemGroup>
             </Project>
             """);
 
-        var metadata = new ProjectMetadataResolver().ResolveWorkspace(workspace.Root);
+        var project = Assert.Single(new ProjectMetadataResolver().ResolveWorkspace(workspace.Root).Projects);
 
-        var project = Assert.Single(metadata.Projects);
-        Assert.Equal(
-            ["device:android", "owner:devflow", "requires:emulator", "scope:maui", "type:integration-test"],
-            project.ExplicitTags);
-        Assert.Contains("os:any", project.InferredTags);
-        Assert.Contains("os:linux", project.InferredTags);
-        Assert.Contains("os:macos", project.InferredTags);
-        Assert.Contains("os:windows", project.InferredTags);
-        Assert.Contains("tfm:net10.0", project.InferredTags);
-        Assert.Contains("tfm-framework:netcoreapp", project.InferredTags);
-        Assert.Contains("tfm-framework-version:10.0", project.InferredTags);
-        Assert.Contains("type:test", project.InferredTags);
-        Assert.Contains("requires:emulator", project.Tags);
-        Assert.Contains("tfm:net10.0", project.Tags);
-        Assert.Contains("type:test", project.Tags);
-        Assert.Empty(metadata.Diagnostics);
-    }
-
-    [Theory]
-    [InlineData("net10.0-android35.0", "platform:android", "tfm-platform-version:35.0")]
-    [InlineData("net10.0-ios18.0", "platform:ios", "tfm-platform-version:18.0")]
-    [InlineData("net10.0-maccatalyst18.0", "platform:maccatalyst", "tfm-platform-version:18.0")]
-    [InlineData("net10.0-tvos18.0", "platform:tvos", "tfm-platform-version:18.0")]
-    [InlineData("net10.0-macos15.0", "platform:macos", "tfm-platform-version:15.0")]
-    [InlineData("net10.0-windows10.0.19041.0", "platform:windows", "tfm-platform-version:10.0.19041.0")]
-    public void InferFromTargetFramework_adds_parsed_tfm_part_tags(string targetFramework, string expectedTag, string expectedVersionTag)
-    {
-        var tags = NxTags.InferFromTargetFramework(CreateEvaluation(
-            targetFramework,
-            targetPlatformIdentifier: expectedTag["platform:".Length..],
-            targetPlatformVersion: expectedVersionTag["tfm-platform-version:".Length..]));
-
-        Assert.Contains(expectedTag, tags);
-        Assert.Contains(expectedTag.Replace("platform:", "tfm-platform:"), tags);
-        Assert.Contains(expectedVersionTag, tags);
-        Assert.Contains($"tfm:{targetFramework.ToLowerInvariant()}", tags);
-        Assert.Contains("tfm-framework:netcoreapp", tags);
-        Assert.Contains("tfm-framework-version:10.0", tags);
-    }
-
-    [Theory]
-    [InlineData("ios")]
-    [InlineData("maccatalyst")]
-    [InlineData("tvos")]
-    [InlineData("macos")]
-    public void InferFromTargetFramework_routes_apple_tfms_to_macos(string platform)
-    {
-        Assert.Equal(["macos"], HostOperatingSystems.InferFromTargetPlatform(platform));
+        Assert.True(project.Capabilities.IsTest);
+        Assert.True(project.Capabilities.IsPackable);
+        Assert.True(project.Capabilities.IsTool);
+        Assert.Equal(["contoso.tests"], project.Capabilities.PackageIds);
+        Assert.Empty(project.Tags);
     }
 
     [Fact]
-    public void ResolveWorkspace_infers_package_tags_from_msbuild_package_id()
+    public void ResolveWorkspace_intersects_hosts_for_the_unqualified_build_target()
     {
         using var workspace = TemporaryWorkspace.Create();
         workspace.Write(
-            "src/Packable/Packable.csproj",
+            "src/App/App.csproj",
             """
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
-                <TargetFramework>net10.0</TargetFramework>
-                <IsPackable>true</IsPackable>
-                <PackageId>Contoso.Widget</PackageId>
+                <TargetFrameworks>net10.0;net10.0-ios18.0</TargetFrameworks>
               </PropertyGroup>
             </Project>
             """);
 
-        var metadata = new ProjectMetadataResolver().ResolveWorkspace(workspace.Root);
+        var project = Assert.Single(new ProjectMetadataResolver().ResolveWorkspace(workspace.Root).Projects);
 
-        var project = Assert.Single(metadata.Projects);
-        Assert.Equal(["contoso.widget"], project.PackageIds);
-        Assert.Contains("package-id:contoso.widget", project.InferredTags);
-        Assert.Contains("type:nuget", project.InferredTags);
-        Assert.Contains("type:packable", project.InferredTags);
+        var requirement = Assert.Single(project.TargetHostRequirements);
+        Assert.Equal("build", requirement.Target);
+        Assert.Equal(["macos"], requirement.Hosts);
+        Assert.Equal(DotnetMetadataSource.Inferred, requirement.Source);
     }
 
     [Fact]
-    public void ResolveWorkspace_reports_invalid_explicit_values()
+    public void ResolveWorkspace_does_not_publish_a_host_when_frameworks_have_no_shared_host()
+    {
+        using var workspace = TemporaryWorkspace.Create();
+        workspace.Write(
+            "src/App/App.csproj",
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFrameworks>net10.0-ios18.0;net10.0-windows10.0.19041.0</TargetFrameworks>
+              </PropertyGroup>
+            </Project>
+            """);
+
+        var project = Assert.Single(new ProjectMetadataResolver().ResolveWorkspace(workspace.Root).Projects);
+
+        Assert.Empty(project.TargetHostRequirements);
+        Assert.Contains(project.Diagnostics, diagnostic => diagnostic.Code == "DNX003");
+    }
+
+    [Fact]
+    public void ResolveWorkspace_keeps_target_specific_explicit_host_requirements()
     {
         using var workspace = TemporaryWorkspace.Create();
         workspace.Write(
@@ -148,7 +165,55 @@ public sealed class ProjectMetadataResolverTests
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
                 <TargetFramework>net10.0</TargetFramework>
-                <NxBuildableOn>beos</NxBuildableOn>
+                <NxBuildHosts>linux;macos;windows</NxBuildHosts>
+                <NxTestHosts>linux</NxTestHosts>
+                <NxPublishHosts>windows</NxPublishHosts>
+              </PropertyGroup>
+            </Project>
+            """);
+
+        var project = Assert.Single(new ProjectMetadataResolver().ResolveWorkspace(workspace.Root).Projects);
+
+        Assert.Equal(3, project.TargetHostRequirements.Count);
+        Assert.Equal(["linux", "macos", "windows"], project.TargetHostRequirements.Single(r => r.Target == "build").Hosts);
+        Assert.Equal(["linux"], project.TargetHostRequirements.Single(r => r.Target == "test").Hosts);
+        Assert.Equal(["windows"], project.TargetHostRequirements.Single(r => r.Target == "publish").Hosts);
+        Assert.All(project.TargetHostRequirements, requirement =>
+            Assert.Equal(DotnetMetadataSource.Explicit, requirement.Source));
+    }
+
+    [Fact]
+    public void ResolveWorkspace_warns_for_legacy_nxbuildableon()
+    {
+        using var workspace = TemporaryWorkspace.Create();
+        workspace.Write(
+            "src/App/App.csproj",
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <NxBuildableOn>macos</NxBuildableOn>
+              </PropertyGroup>
+            </Project>
+            """);
+
+        var project = Assert.Single(new ProjectMetadataResolver().ResolveWorkspace(workspace.Root).Projects);
+
+        Assert.Equal(["macos"], Assert.Single(project.TargetHostRequirements).Hosts);
+        Assert.Contains(project.Diagnostics, diagnostic => diagnostic.Code == "DNX002");
+    }
+
+    [Fact]
+    public void ResolveWorkspace_reports_invalid_explicit_hosts()
+    {
+        using var workspace = TemporaryWorkspace.Create();
+        workspace.Write(
+            "src/App/App.csproj",
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <NxBuildHosts>beos</NxBuildHosts>
               </PropertyGroup>
             </Project>
             """);
@@ -160,27 +225,6 @@ public sealed class ProjectMetadataResolverTests
             diagnostic.Severity == DotnetNxDiagnosticSeverity.Error);
         Assert.Single(metadata.Diagnostics, diagnostic => diagnostic.Code == "DNX001");
     }
-
-    private static MSBuildProjectEvaluation CreateEvaluation(
-        string targetFramework,
-        string targetPlatformIdentifier = "",
-        string targetPlatformVersion = "") =>
-        new(
-            new MSBuildPropertyValue(string.Empty, null),
-            new MSBuildPropertyValue(string.Empty, null),
-            targetFramework,
-            ".NETCoreApp",
-            "v10.0",
-            string.Empty,
-            targetPlatformIdentifier,
-            targetPlatformVersion,
-            string.Empty,
-            string.Empty,
-            string.Empty,
-            string.Empty,
-            string.Empty,
-            string.Empty,
-            []);
 
     private sealed class TemporaryWorkspace : IDisposable
     {

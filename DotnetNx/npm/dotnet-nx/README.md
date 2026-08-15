@@ -1,18 +1,31 @@
 # @redth/dotnet-nx
 
-Thin Nx plugin for DotnetNx.
+Thin Nx companion plugin for structured .NET/MSBuild metadata.
 
-Nx plugin entry points run in Node, so this package intentionally keeps JavaScript small and delegates MSBuild-aware work to the `nxdn` .NET global tool.
+Use it alongside the official `@nx/dotnet` plugin:
 
 ```json
 {
   "plugins": [
     "@nx/dotnet",
-    "@redth/dotnet-nx"
+    {
+      "plugin": "@redth/dotnet-nx",
+      "options": {
+        "selectorTags": ["platform"],
+        "selectorTagPrefix": "dotnet"
+      }
+    }
   ]
 }
 ```
 
-Set `DOTNET_NX_NXDN` or the plugin `nxdnPath` option when `nxdn` is not on `PATH`.
+`@nx/dotnet` owns inferred targets, commands, inputs, outputs, caching, and dependencies. This plugin delegates MSBuild evaluation to `nxdn project-metadata` and contributes:
 
-Project tags come from `nxdn project-metadata`, including `NxBuildableOn`, `NxTags`, `NxTag` MSBuild items, and conservative DotnetNx inferred tags such as `os:*`, parsed TFM parts, `platform:*`, `type:*`, `package-id:*`, and `sdk:maui`. The merged tags are written to Nx `tags`; provenance is available under `metadata.dotnetNx.explicitTags`, `metadata.dotnetNx.inferredTags`, and `metadata.dotnetNx.packageIds`.
+- Native `projectType` and `metadata.technologies`.
+- Structured capabilities and per-framework metadata under `metadata.dotnetNx`.
+- Explicit project-wide `NxTags`/`NxTag` values.
+- Optional namespaced selector tags for target framework, platform, runtime identifier, capability, or target-specific host compatibility.
+
+Inferred selector tags are disabled by default. Host selector tags use only explicit target requirements unless `includeInferredHostSelectors` is set.
+
+Set `DOTNET_NX_NXDN` or `nxdnPath` when `nxdn` is not on `PATH`.

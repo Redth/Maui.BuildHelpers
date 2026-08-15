@@ -32,7 +32,7 @@ public static class HostOperatingSystems
             }
         }
 
-        return normalized.Count == 0 ? All : normalized.ToArray();
+        return normalized.ToArray();
     }
 
     public static IReadOnlyList<string> Parse(string value)
@@ -56,36 +56,75 @@ public static class HostOperatingSystems
         return invalid.ToArray();
     }
 
-    public static IReadOnlyList<string> InferFromTargetFrameworks(IEnumerable<string> targetFrameworks) => All;
-
-    public static IReadOnlyList<string> InferFromTargetPlatform(string targetPlatformIdentifier)
+    public static IReadOnlyList<string> InferBuildHosts(
+        string targetPlatformIdentifier,
+        IEnumerable<string> runtimeIdentifiers)
     {
         var platform = TargetFrameworkPartsParser.NormalizeTagValue(targetPlatformIdentifier);
+        IReadOnlyList<string> platformHosts;
         if (platform is "ios" or "maccatalyst" or "tvos" or "macos")
         {
-            return ["macos"];
+            platformHosts = ["macos"];
         }
-
-        if (platform == "windows")
+        else if (platform == "windows")
         {
-            return ["windows"];
+            platformHosts = ["windows"];
+        }
+        else
+        {
+            platformHosts = All;
         }
 
-        return All;
+        var ridHosts = runtimeIdentifiers
+            .Select(InferHostFromRuntimeIdentifier)
+            .Where(host => host is not null)
+            .Cast<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        return ridHosts.Length == 0
+            ? platformHosts
+            : Intersect([platformHosts, ridHosts]);
     }
 
-    public static IReadOnlyList<string> ToTags(IReadOnlyCollection<string> buildableOn)
+    public static IReadOnlyList<string> Intersect(IEnumerable<IReadOnlyList<string>> hostSets)
     {
-        var tags = buildableOn
-            .OrderBy(value => value, StringComparer.Ordinal)
-            .Select(value => $"os:{value}")
-            .ToList();
-
-        if (All.All(value => buildableOn.Contains(value)))
+        HashSet<string>? intersection = null;
+        foreach (var hostSet in hostSets)
         {
-            tags.Add("os:any");
+            if (intersection is null)
+            {
+                intersection = new HashSet<string>(hostSet, StringComparer.Ordinal);
+            }
+            else
+            {
+                intersection.IntersectWith(hostSet);
+            }
         }
 
-        return tags;
+        return intersection?.OrderBy(host => host, StringComparer.Ordinal).ToArray() ?? [];
+    }
+
+    private static string? InferHostFromRuntimeIdentifier(string runtimeIdentifier)
+    {
+        var rid = runtimeIdentifier.Trim().ToLowerInvariant();
+        if (rid.StartsWith("win-", StringComparison.Ordinal) || rid == "win")
+        {
+            return "windows";
+        }
+
+        if (rid.StartsWith("osx-", StringComparison.Ordinal) ||
+            rid.StartsWith("ios-", StringComparison.Ordinal) ||
+            rid.StartsWith("maccatalyst-", StringComparison.Ordinal))
+        {
+            return "macos";
+        }
+
+        if (rid.StartsWith("linux-", StringComparison.Ordinal) || rid == "linux")
+        {
+            return "linux";
+        }
+
+        return null;
     }
 }

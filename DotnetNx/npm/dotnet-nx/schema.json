@@ -5,6 +5,37 @@
     "nxdnPath": {
       "type": "string",
       "description": "Path to the nxdn executable. Defaults to DOTNET_NX_NXDN or nxdn on PATH."
+    },
+    "selectorTags": {
+      "type": "array",
+      "description": "Structured metadata dimensions to project into namespaced Nx tags. Empty by default.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "target-framework",
+          "platform",
+          "runtime-identifier",
+          "host"
+        ]
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "selectorTagPrefix": {
+      "type": "string",
+      "description": "Prefix for opt-in selector tags.",
+      "default": "dotnet",
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "hostTarget": {
+      "type": "string",
+      "description": "Target whose aggregate host requirement is projected when selectorTags includes host.",
+      "default": "build"
+    },
+    "includeInferredHostSelectors": {
+      "type": "boolean",
+      "description": "Allow advisory inferred host compatibility to become selector tags. Explicit host requirements are always eligible.",
+      "default": false
     }
   },
   "additionalProperties": false

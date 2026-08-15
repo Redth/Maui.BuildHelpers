@@ -26,6 +26,20 @@ internal static class TargetFrameworkPartsParser
             NormalizeOptionalVersion(evaluation.TargetPlatformVersion));
     }
 
+    public static DotnetTargetFrameworkMetadata? ToMetadata(MSBuildProjectEvaluation evaluation)
+    {
+        var parts = FromEvaluation(evaluation);
+        return parts is null
+            ? null
+            : new DotnetTargetFrameworkMetadata(
+                parts.ShortName,
+                parts.Framework,
+                parts.FrameworkVersion,
+                parts.Profile,
+                parts.Platform,
+                parts.PlatformVersion);
+    }
+
     public static string NormalizeTagValue(string value) =>
         value.Trim().ToLowerInvariant();
 

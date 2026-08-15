@@ -1,129 +1,179 @@
 # DotnetNx
 
-DotnetNx is a .NET-first home for Nx and `@nx/dotnet` improvements aimed at MAUI-heavy monorepos.
+DotnetNx is a .NET-first companion to the official `@nx/dotnet` plugin.
 
-The starting point is the experimental work from `dotnet/maui-labs#204`: affected builds, Nx cache trials, MSBuild SDK resolver setup, and per-project host OS routing. This folder moves those ideas into reusable packages and actions so consuming repositories do not need checked-in `nx` wrappers, custom JavaScript resolver scripts, root `package.json` scripts, or hand-maintained per-project Nx metadata.
+`@nx/dotnet` owns task inference: it evaluates MSBuild and creates the standard `build`, `test`, `run`, `pack`, `publish`, `restore`, `clean`, and `watch` targets. DotnetNx adds project-system facts that are useful to Nx consumers but are not currently exposed by that plugin:
 
-## Goals
+- Structured, evaluated metadata for each target framework.
+- Project capabilities such as test, executable, packable, publishable, and tool.
+- Runtime identifiers, package IDs, project type, and technology metadata.
+- Explicit Nx tags authored in MSBuild.
+- Target-specific host requirements with explicit versus inferred provenance.
+- Optional, namespaced selector tags for the few metadata dimensions a workspace needs to query with Nx.
 
-- Keep MSBuild, project evaluation, SDK resolver discovery, and host routing logic in C#/.NET.
-- Use JavaScript only where Nx requires a Node plugin entry point.
-- Provide `nxdn` as the stable command-line entrypoint for .NET repositories invoking Nx.
-- Provide a NuGet package for MSBuild props, targets, and tasks.
-- Provide composite GitHub Actions so workflows can call common affected-build flows without copying large YAML blocks.
+The implementation is intentionally split this way so task commands, inputs, outputs, caching, dependencies, and configurations remain the responsibility of `@nx/dotnet`.
 
 ## Layout
 
 ```text
 DotnetNx/
   src/
-    DotnetNx.Core/       Shared project metadata, host OS routing, and SDK resolver logic.
+    DotnetNx.Core/       MSBuild evaluation and structured project metadata.
     DotnetNx.MSBuild/    NuGet package with MSBuild task/targets.
     DotnetNx.Tool/       nxdn .NET global tool.
   npm/
-    dotnet-nx/           Thin Nx plugin that shells out to nxdn.
+    dotnet-nx/           Thin Nx plugin that invokes nxdn.
   actions/
-    setup-nxdn/          Composite action for tool setup and resolver environment export.
-    setup-cache/         Composite action for Nx and .NET build cache paths.
-    configure-nx/        Composite action for validating or writing nx.json plugin entries.
-    doctor/              Composite action for DotnetNx diagnostics.
-    affected-info/       Composite action for affected project reporting.
-    affected-matrix/     Composite action for OS-tagged affected matrix outputs.
-    run-affected/        Composite action for running affected Nx targets.
-    run-target/          Composite action for running a single Nx project target.
+    setup-nxdn/          Install nxdn and export resolver environment.
+    setup-cache/         Cache Nx and common .NET output paths.
+    configure-nx/        Validate or write Nx plugin configuration.
+    doctor/              Run diagnostics and emit metadata.
+    affected-info/       Report affected projects.
+    affected-matrix/     Build a target-specific host matrix.
+    run-affected/        Run an affected target with optional host selection.
+    run-target/          Run one Nx project target.
   tests/
-    DotnetNx.Core.Tests/
-    DotnetNx.Tool.Tests/
 ```
 
-## `NxBuildableOn`
+## Metadata model
 
-Projects can declare which GitHub runner host OSes can build them:
+`nxdn project-metadata` evaluates every project and target framework through MSBuild. The plugin publishes the result under `metadata.dotnetNx` and contributes native Nx fields where they have established meanings:
+
+- `projectType`: `application` for executable projects, otherwise `library`.
+- `metadata.technologies`: `.NET`, project language, and detected SDK technologies such as MAUI.
+- `tags`: explicit project-wide tags plus any opt-in selector projection.
+- `metadata.dotnetNx.capabilities`: evaluated project capabilities.
+- `metadata.dotnetNx.configurations`: per-framework metadata, runtime identifiers, conditional tags, capabilities, and host requirements.
+- `metadata.dotnetNx.targetHostRequirements`: requirements that are valid for every evaluated configuration of a target.
+
+Capabilities are structured facts, not automatic `type:*` tags. For example, a project can be executable, testable, packable, and publishable at the same time. Nx targets remain the authoritative representation of what the project can do.
+
+## Explicit Nx tags from MSBuild
+
+Use `NxTags` or `NxTag` for intentional workspace taxonomy such as scope, ownership, domain, or architectural layer:
 
 ```xml
 <PropertyGroup>
-  <NxBuildableOn>macos</NxBuildableOn>
-</PropertyGroup>
-```
-
-Supported values are `linux`, `macos`, `windows`, `any`, and `all`. Values can be separated by semicolons, commas, or whitespace.
-
-When `NxBuildableOn` is unset, DotnetNx evaluates target frameworks and infers initial defaults:
-
-- `-ios`, `-maccatalyst`, `-tvos`, and `-macos` target framework suffixes route to `macos`.
-- `-windows` target framework suffixes route to `windows`.
-- Plain managed projects and Android projects default to `linux`, `macos`, and `windows`.
-- Projects buildable on all supported hosts also receive `os:any`.
-
-Unlike the trial JavaScript plugin, this is based on MSBuild evaluation, so values imported from `Directory.Build.props`, package props, SDK props, and conditional property groups are resolved through MSBuild.
-
-## Nx tags from MSBuild
-
-DotnetNx also exposes generic Nx tags from MSBuild so repositories can filter affected work without duplicating project metadata in JavaScript or `nx.json`.
-
-Use `NxTags` for simple property-based tags and `NxTag` items when item conditions are more convenient:
-
-```xml
-<PropertyGroup>
-  <NxBuildableOn>macos;windows</NxBuildableOn>
-  <NxTags>scope:maui;type:integration-test;device:android</NxTags>
+  <NxTags>scope:client;owner:devflow</NxTags>
 </PropertyGroup>
 
 <ItemGroup>
-  <NxTag Include="owner:devflow" />
-  <NxTag Include="requires:emulator" Condition="'$(TargetFramework)' == 'net10.0-android'" />
+  <NxTag Include="requires:emulator"
+         Condition="'$(TargetFramework)' == 'net10.0-android'" />
 </ItemGroup>
 ```
 
-`NxTags` and `NxTag` values can be separated with semicolons, commas, whitespace, or newlines. DotnetNx merges those explicit tags with conservative inferred tags:
+Tags conditioned on a target framework stay on that configuration. DotnetNx only promotes a tag to the native project `tags` field when it applies to every evaluated configuration. This avoids changing “the Android configuration requires an emulator” into “the whole project requires an emulator.”
 
-- `os:<host>` and `os:any` from `NxBuildableOn` or target-framework host inference.
-- `tfm:<target-framework>`, `tfm-framework:<framework>`, and `tfm-framework-version:<version>` from MSBuild's evaluated target framework parts.
-- `platform:<platform>`, `tfm-platform:<platform>`, and `tfm-platform-version:<version>` for platform-specific target frameworks.
-- `type:test`, `type:packable`, `type:nuget`, and `type:tool` from `IsTestProject`, `IsPackable`, `PackageId`, and `PackAsTool`.
-- `package-id:<id>` from the MSBuild `PackageId` used for packable NuGet projects, falling back to `AssemblyName` when `PackageId` is not set.
-- `sdk:maui` when `UseMaui` evaluates to `true`.
+## Target-specific host requirements
 
-The Nx plugin writes the merged list to the standard Nx `tags` field. It also includes provenance under `metadata.dotnetNx.explicitTags`, `metadata.dotnetNx.inferredTags`, and `metadata.dotnetNx.packageIds` for diagnostics and custom tooling.
+Host compatibility belongs to an executable target, not to a project in the abstract. A build, test, run, and publish operation can have different requirements.
+
+Declare known requirements with target-specific MSBuild properties:
+
+```xml
+<PropertyGroup>
+  <NxBuildHosts>macos;windows</NxBuildHosts>
+  <NxTestHosts>macos</NxTestHosts>
+  <NxRunHosts>macos</NxRunHosts>
+  <NxPublishHosts>macos</NxPublishHosts>
+  <NxPackHosts>linux;macos;windows</NxPackHosts>
+  <NxRestoreHosts>linux;macos;windows</NxRestoreHosts>
+</PropertyGroup>
+```
+
+Supported host values are `linux`, `macos`, `windows`, `any`, and `all`. `NxBuildableOn` remains readable for migration but is deprecated in favor of `NxBuildHosts`.
+
+When `NxBuildHosts` is absent, DotnetNx records advisory build-host compatibility inferred from each evaluated target platform and runtime identifier. It does not infer test, run, or publish requirements because those frequently depend on devices, emulators, signing, native toolchains, or workloads that a target framework alone cannot prove.
+
+For an unqualified Nx target, project-level compatibility uses the intersection of all evaluated configurations:
+
+- `net10.0;net10.0-ios` has an advisory shared build host of macOS.
+- `net10.0-ios;net10.0-windows` has no shared build host and therefore receives no project-level build-host requirement.
+
+The per-framework facts remain available so a future framework-specific target configuration can represent each branch independently.
+
+Host metadata describes compatibility; it does not verify that required workloads, SDKs, devices, signing assets, or native dependencies are installed.
+
+## Optional selector tags
+
+Nx can inspect arbitrary metadata, but its project selector filters by name, directory, or tag. DotnetNx therefore supports an explicit projection of selected metadata into namespaced tags.
+
+No inferred selector tags are enabled by default:
+
+```json
+{
+  "plugins": [
+    "@nx/dotnet",
+    {
+      "plugin": "@redth/dotnet-nx",
+      "options": {
+        "selectorTags": [
+          "target-framework",
+          "platform",
+          "runtime-identifier",
+          "host"
+        ],
+        "selectorTagPrefix": "dotnet",
+        "hostTarget": "build",
+        "includeInferredHostSelectors": false
+      }
+    }
+  ]
+}
+```
+
+Available projections are:
+
+| Dimension | Example |
+| --- | --- |
+| `target-framework` | `dotnet:tfm:net10.0-ios` |
+| `platform` | `dotnet:platform:ios` |
+| `runtime-identifier` | `dotnet:rid:ios-arm64` |
+| `host` | `dotnet:host:build:macos` |
+
+Host selectors use only explicit requirements unless `includeInferredHostSelectors` is enabled. Inferred host compatibility is advisory and may not reflect the tools installed on a runner.
+
+Prefer the smallest projection needed by a real query. High-cardinality facts such as package IDs and framework versions remain structured metadata rather than becoming tags.
 
 ## `nxdn`
 
-`nxdn` is a .NET global tool intended to wrap Nx invocation:
+`nxdn` is the stable .NET entry point used by the plugin and Actions:
 
 ```bash
 nxdn export-env --format github
 nxdn project-metadata --workspace .
-nxdn nx -- affected -t build --base=<sha> --head=<sha>
-nxdn affected -- -t test --base=<sha> --head=<sha> --projects=tag:os:macos
 nxdn diagnose
+nxdn nx -- affected -t build --base=<sha> --head=<sha>
+nxdn show-projects -- --affected --base=<sha> --head=<sha> --json
 ```
 
-The tool locates the selected .NET SDK, computes MSBuild SDK resolver environment variables, and then invokes Nx with that environment applied.
+It locates the selected .NET SDK, computes MSBuild SDK resolver variables, and invokes Nx with that environment. The wrapper is local integration infrastructure; it is not part of the proposed upstream Nx feature.
 
 ## Nx plugin
 
-The npm package under `npm/dotnet-nx` is deliberately small. It implements Nx's `createNodesV2` surface and delegates metadata generation to:
+Install both plugins because they have separate responsibilities:
+
+```json
+{
+  "plugins": [
+    "@nx/dotnet",
+    "@redth/dotnet-nx"
+  ]
+}
+```
+
+The npm entry point implements Nx’s `createNodesV2` surface and delegates evaluation to:
 
 ```bash
 nxdn project-metadata --workspace <repo>
 ```
 
-That keeps MSBuild evaluation and SDK path discovery in .NET while still satisfying Nx's Node plugin model.
+Set `DOTNET_NX_NXDN` or the plugin `nxdnPath` option when `nxdn` is not on `PATH`.
 
 ## GitHub Actions
 
-Initial composite actions are provided under `actions/`:
-
-- `setup-nxdn`: setup .NET/Node, install `DotnetNx.Tool`, and export resolver environment. By default it installs from `https://nuget.pkg.github.com/Redth/index.json` using `github.token`, so consuming workflows need `packages: read`.
-- `setup-cache`: restore/cache Nx cache plus common .NET build output paths.
-- `configure-nx`: validate or write minimal `nx.json` plugin entries for `@nx/dotnet` and `@redth/dotnet-nx`.
-- `doctor`: run `nxdn diagnose`, validate Nx configuration, and optionally emit project metadata JSON.
-- `affected-info`: compute and summarize affected projects.
-- `affected-matrix`: compute OS-tagged affected project lists and a GitHub Actions matrix.
-- `run-affected`: run an affected target with optional `os:<host>` filtering.
-- `run-target`: run a specific Nx project target through `nxdn`.
-
-Minimal setup from another repository:
+Minimal setup:
 
 ```yaml
 permissions:
@@ -135,52 +185,28 @@ steps:
     with:
       fetch-depth: 0
   - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
-    with:
-      tool-version: 0.1.0
 ```
 
-Use `tool-source`, `tool-source-name`, `tool-source-username`, `github-token`, and `tool-package-id` on `setup-nxdn` when installing `nxdn` from a different NuGet feed or package ID.
-
-Validate a consuming repo:
+Configure explicit tags only:
 
 ```yaml
-steps:
-  - uses: actions/checkout@v6
-  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
-  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/doctor@v0.3
+- uses: Redth/Maui.BuildHelpers/DotnetNx/actions/configure-nx@v0.3
+  with:
+    write: true
 ```
 
-Write missing Nx plugin configuration:
+Enable build-host selectors for a host matrix:
 
 ```yaml
-steps:
-  - uses: actions/checkout@v6
-  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
-  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/configure-nx@v0.3
-    with:
-      write: true
+- uses: Redth/Maui.BuildHelpers/DotnetNx/actions/configure-nx@v0.3
+  with:
+    write: true
+    selector-tags: host
+    host-target: build
+    include-inferred-host-selectors: false
 ```
 
-Example workflow shape:
-
-```yaml
-steps:
-  - uses: actions/checkout@v6
-    with:
-      fetch-depth: 0
-  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
-  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-cache@v0.3
-  - id: affected
-    uses: Redth/Maui.BuildHelpers/DotnetNx/actions/affected-info@v0.3
-  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/run-affected@v0.3
-    with:
-      target: build
-      base: ${{ steps.affected.outputs.base }}
-      head: ${{ steps.affected.outputs.head }}
-      os-tag: macos
-```
-
-Build an OS-tagged affected matrix:
+With `include-inferred-host-selectors: false`, projects need an explicit `NxBuildHosts` declaration to enter the matrix. Set it to `true` only when advisory TFM/RID inference is acceptable for the repository.
 
 ```yaml
 jobs:
@@ -198,6 +224,8 @@ jobs:
       - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
       - id: affected
         uses: Redth/Maui.BuildHelpers/DotnetNx/actions/affected-matrix@v0.3
+        with:
+          target: build
 
   build:
     needs: affected
@@ -215,67 +243,40 @@ jobs:
           target: build
           base: ${{ needs.affected.outputs.base }}
           head: ${{ needs.affected.outputs.head }}
-          os-tag: ${{ matrix.osTag }}
+          host: ${{ matrix.host }}
+          projects-json: ${{ toJson(matrix.projects) }}
 ```
 
-Run a specific project target when you already know the Nx project and target:
+The matrix assigns each affected project to the first compatible host in `host-preference` (Linux, macOS, then Windows by default), so projects compatible with several hosts run only once. It fails by default if any affected project is unrouted. `affected-matrix` and `run-affected` must use the same target and selector prefix.
 
-```yaml
-steps:
-  - uses: actions/checkout@v6
-  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-nxdn@v0.3
-  - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/run-target@v0.3
-    with:
-      project: Microsoft.Maui.DevFlow.Agent.IntegrationTests.Android
-      target: test
-      env: |
-        TEST_CONFIGURATION=Debug
-      script: |
-        export DEVFLOW_TEST_ANDROID_SERIAL="$(adb devices | awk '/^emulator-[0-9]+[[:space:]]+device$/ { print $1; exit }')"
-        echo "Using Android emulator serial: ${DEVFLOW_TEST_ANDROID_SERIAL:-<none found>}"
-```
-
-That action runs:
-
-```bash
-nxdn nx -- run Microsoft.Maui.DevFlow.Agent.IntegrationTests.Android:test
-```
-
-You can also pass the full Nx run id directly:
+Run a known project target:
 
 ```yaml
 - uses: Redth/Maui.BuildHelpers/DotnetNx/actions/run-target@v0.3
   with:
-    run-id: Microsoft.Maui.DevFlow.Agent.IntegrationTests.Android:test
+    project: Microsoft.Maui.DevFlow.Agent.IntegrationTests.Android
+    target: test
+    configuration: debug
 ```
 
 Both `run-target` and `run-affected` accept:
 
 - `env`: multiline `NAME=VALUE` entries exported before `nxdn` runs.
-- `script`: a Bash setup script sourced in the same shell before `nxdn` runs, useful for computed environment values.
-
-Cache setup defaults to `.nx/cache`, `artifacts/bin`, and `artifacts/obj`, with `extra-paths` for repo-specific additions:
-
-```yaml
-- uses: Redth/Maui.BuildHelpers/DotnetNx/actions/setup-cache@v0.3
-  with:
-    extra-paths: |
-      ~/.nuget/packages
-```
+- `script`: a Bash setup script sourced before `nxdn` runs.
 
 ## Publishing
 
-The repository includes two top-level workflows for DotnetNx:
+`DotnetNx CI` validates the .NET projects, structured metadata output, npm plugin, and NuGet packages. `Publish DotnetNx packages` publishes the NuGet and npm packages through a manual workflow.
 
-- `DotnetNx CI` validates the .NET projects, `nxdn project-metadata`, the npm plugin, and NuGet packing on PRs and pushes that touch DotnetNx files.
-- `Publish DotnetNx packages` is a manual `workflow_dispatch` workflow that publishes all DotnetNx NuGet packages to `https://nuget.pkg.github.com/Redth/index.json` and publishes `@redth/dotnet-nx` to `https://npm.pkg.github.com`.
+## Upstream direction
 
-Run the publish workflow from GitHub Actions with the package version to publish, for example `0.1.0-alpha.1`. The workflow uses `GITHUB_TOKEN` with `packages: write` permission, so no additional package secret is required for publishing to this repository owner.
+The proposed contribution to Nx is documented in [NX_UPSTREAM_DISCUSSION.md](NX_UPSTREAM_DISCUSSION.md). It focuses on structured MSBuild metadata and framework/RID-specific target modeling, not on upstreaming `nxdn`, this companion plugin, or the GitHub Actions.
 
-## Migration notes from `maui-labs#204`
+## Migration from the earlier prototype
 
-- Replace `eng/nx/nx-msbuild-resolvers.js` with `nxdn export-env` or `nxdn nx`.
-- Replace regex-based `NxBuildableOn` tag extraction with the DotnetNx plugin backed by MSBuild evaluation.
-- Replace checked-in `nx` wrapper scripts with `nxdn nx -- ...` where practical.
-- Replace full copied workflows with the composite actions in this folder.
-- Keep repository-specific exclusions in consuming workflow inputs until they can be represented as project metadata.
+- Replace `NxBuildableOn` with target-specific `NxBuildHosts`, `NxTestHosts`, `NxRunHosts`, or `NxPublishHosts`.
+- Replace automatic `os:*`, `tfm:*`, `platform:*`, and `type:*` assumptions with structured `metadata.dotnetNx`.
+- Enable only the selector-tag dimensions a consuming workflow actually queries.
+- Replace `os-tag` on `run-affected` with `host`.
+- Use `${{ matrix.host }}` rather than `${{ matrix.osTag }}` in affected matrices.
+- Keep target commands, cache settings, outputs, dependencies, and Debug/Release configurations owned by `@nx/dotnet`.

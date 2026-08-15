@@ -1,5 +1,5 @@
 name: DotnetNx run affected
-description: Run an Nx affected target through nxdn with optional OS tag routing.
+description: Run an Nx affected target through nxdn with optional target-specific host selector routing.
 
 inputs:
   workspace:
@@ -15,8 +15,16 @@ inputs:
   head:
     description: Head commit SHA.
     required: true
-  os-tag:
-    description: Optional DotnetNx OS tag filter, such as linux, macos, or windows.
+  host:
+    description: Optional host selector, such as linux, macos, or windows. Requires host selector tags in the plugin configuration.
+    required: false
+    default: ''
+  selector-tag-prefix:
+    description: Prefix used by the DotnetNx plugin for selector tags.
+    required: false
+    default: dotnet
+  projects-json:
+    description: Optional JSON array of exact project names. Takes precedence over host selection.
     required: false
     default: ''
   exclude:
@@ -46,7 +54,9 @@ runs:
         DOTNET_NX_TARGET: ${{ inputs.target }}
         DOTNET_NX_BASE: ${{ inputs.base }}
         DOTNET_NX_HEAD: ${{ inputs.head }}
-        DOTNET_NX_OS_TAG: ${{ inputs.os-tag }}
+        DOTNET_NX_HOST: ${{ inputs.host }}
+        DOTNET_NX_SELECTOR_TAG_PREFIX: ${{ inputs.selector-tag-prefix }}
+        DOTNET_NX_PROJECTS_JSON: ${{ inputs.projects-json }}
         DOTNET_NX_EXCLUDE: ${{ inputs.exclude }}
         DOTNET_NX_EXTRA_ARGS: ${{ inputs.extra-args }}
         DOTNET_NX_ENV: ${{ inputs.env }}
@@ -81,8 +91,15 @@ runs:
           "--base=$DOTNET_NX_BASE"
           "--head=$DOTNET_NX_HEAD"
         )
-        if [[ -n "$DOTNET_NX_OS_TAG" ]]; then
-          args+=("--projects=tag:os:$DOTNET_NX_OS_TAG")
+        if [[ -n "$DOTNET_NX_PROJECTS_JSON" ]]; then
+          projects="$(node -e 'const value=JSON.parse(process.env.DOTNET_NX_PROJECTS_JSON); if(!Array.isArray(value)) throw new Error("projects-json must be a JSON array"); process.stdout.write(value.join(","));')"
+          if [[ -z "$projects" ]]; then
+            echo "::error::projects-json did not contain any projects."
+            exit 1
+          fi
+          args+=("--projects=$projects")
+        elif [[ -n "$DOTNET_NX_HOST" ]]; then
+          args+=("--projects=tag:$DOTNET_NX_SELECTOR_TAG_PREFIX:host:$DOTNET_NX_TARGET:$DOTNET_NX_HOST")
         fi
         if [[ -n "$DOTNET_NX_EXCLUDE" ]]; then
           args+=("--exclude=$DOTNET_NX_EXCLUDE")
