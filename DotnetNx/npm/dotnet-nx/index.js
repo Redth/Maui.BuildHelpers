@@ -4,6 +4,7 @@ const childProcess = require('child_process');
 const path = require('path');
 
 const PROJECT_PATTERN = '**/*.{csproj,fsproj,vbproj}';
+const DEFAULT_SELECTOR_TAG_PREFIX = 'dotnet';
 
 function runNxdn(workspaceRoot, projectFiles, options) {
   const command = options?.nxdnPath || process.env.DOTNET_NX_NXDN || 'nxdn';
@@ -31,26 +32,29 @@ function runNxdn(workspaceRoot, projectFiles, options) {
   return JSON.parse(result.stdout);
 }
 
-function toNxNode(project) {
+function toNxNode(project, options) {
   const projectRoot = project.projectRoot && project.projectRoot !== '.'
     ? project.projectRoot
     : path.dirname(project.projectFile);
+  const selectorTags = createSelectorTags(project, options || {});
+  const tags = [...new Set([...(project.explicitTags || []), ...selectorTags])].sort();
 
   return [
     project.projectFile,
     {
       projects: {
         [projectRoot]: {
-          tags: project.tags,
+          projectType: project.projectType,
+          tags,
           metadata: {
+            technologies: project.technologies || ['dotnet'],
             dotnetNx: {
-              packageIds: project.packageIds || [],
-              buildableOn: project.buildableOn,
+              schemaVersion: 2,
+              capabilities: project.capabilities,
+              configurations: project.configurations || [],
+              targetHostRequirements: project.targetHostRequirements || [],
               explicitTags: project.explicitTags || [],
-              inferredTags: project.inferredTags || [],
-              resolution: project.resolution,
-              sourceFile: project.sourceFile,
-              targetFrameworks: project.targetFrameworks,
+              selectorTags,
               diagnostics: project.diagnostics,
             },
           },
@@ -58,6 +62,52 @@ function toNxNode(project) {
       },
     },
   ];
+}
+
+function createSelectorTags(project, options) {
+  const selectors = new Set(options?.selectorTags || []);
+  const prefix = options?.selectorTagPrefix || DEFAULT_SELECTOR_TAG_PREFIX;
+  const tags = new Set();
+  const configurations = project.configurations || [];
+
+  if (selectors.has('target-framework')) {
+    for (const configuration of configurations) {
+      if (configuration.framework?.shortName) {
+        tags.add(`${prefix}:tfm:${configuration.framework.shortName}`);
+      }
+    }
+  }
+
+  if (selectors.has('platform')) {
+    for (const configuration of configurations) {
+      if (configuration.framework?.platform) {
+        tags.add(`${prefix}:platform:${configuration.framework.platform}`);
+      }
+    }
+  }
+
+  if (selectors.has('runtime-identifier')) {
+    for (const configuration of configurations) {
+      for (const runtimeIdentifier of configuration.runtimeIdentifiers || []) {
+        tags.add(`${prefix}:rid:${runtimeIdentifier}`);
+      }
+    }
+  }
+
+  if (selectors.has('host')) {
+    const target = options?.hostTarget || 'build';
+    const requirement = (project.targetHostRequirements || [])
+      .find(candidate => candidate.target === target);
+    const mayUseRequirement = requirement &&
+      (requirement.source === 'explicit' || options?.includeInferredHostSelectors === true);
+    if (mayUseRequirement) {
+      for (const host of requirement.hosts || []) {
+        tags.add(`${prefix}:host:${target}:${host}`);
+      }
+    }
+  }
+
+  return [...tags].sort();
 }
 
 module.exports = {
@@ -69,7 +119,11 @@ module.exports = {
       }
 
       const metadata = runNxdn(context.workspaceRoot, projectFiles, options || {});
-      return metadata.projects.map(toNxNode);
+      return metadata.projects.map(project => toNxNode(project, options || {}));
     },
   ],
+  _internal: {
+    createSelectorTags,
+    toNxNode,
+  },
 };

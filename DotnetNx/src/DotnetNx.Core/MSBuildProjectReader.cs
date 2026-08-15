@@ -23,8 +23,14 @@ internal static class MSBuildProjectReader
         using var collection = CreateProjectCollection(targetFramework);
         var project = new Project(projectFile, collection.GlobalProperties, toolsVersion: null, collection);
         return new MSBuildProjectEvaluation(
-            GetProperty(project, "NxBuildableOn"),
             GetProperty(project, "NxTags"),
+            GetProperty(project, "NxBuildHosts"),
+            GetProperty(project, "NxBuildableOn"),
+            GetProperty(project, "NxTestHosts"),
+            GetProperty(project, "NxRunHosts"),
+            GetProperty(project, "NxPublishHosts"),
+            GetProperty(project, "NxPackHosts"),
+            GetProperty(project, "NxRestoreHosts"),
             project.GetPropertyValue("TargetFramework"),
             project.GetPropertyValue("TargetFrameworkIdentifier"),
             project.GetPropertyValue("TargetFrameworkVersion"),
@@ -33,10 +39,21 @@ internal static class MSBuildProjectReader
             project.GetPropertyValue("TargetPlatformVersion"),
             project.GetPropertyValue("IsTestProject"),
             project.GetPropertyValue("IsPackable"),
+            project.GetPropertyValue("IsPublishable"),
             project.GetPropertyValue("PackAsTool"),
             project.GetPropertyValue("UseMaui"),
+            project.GetPropertyValue("OutputType"),
             project.GetPropertyValue("PackageId"),
             project.GetPropertyValue("AssemblyName"),
+            SplitPropertyList(project.GetPropertyValue("RuntimeIdentifier"))
+                .Concat(SplitPropertyList(project.GetPropertyValue("RuntimeIdentifiers")))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            project.GetItems("PackageReference")
+                .Select(item => item.EvaluatedInclude)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
             project.GetItems("NxTag")
                 .Select(item => new MSBuildItemValue(item.EvaluatedInclude, item.Xml?.Location.File))
                 .ToArray());
@@ -74,8 +91,14 @@ internal sealed record MSBuildPropertyValue(string Value, string? SourceFile);
 internal sealed record MSBuildItemValue(string Value, string? SourceFile);
 
 internal sealed record MSBuildProjectEvaluation(
-    MSBuildPropertyValue NxBuildableOn,
     MSBuildPropertyValue NxTags,
+    MSBuildPropertyValue NxBuildHosts,
+    MSBuildPropertyValue NxBuildableOn,
+    MSBuildPropertyValue NxTestHosts,
+    MSBuildPropertyValue NxRunHosts,
+    MSBuildPropertyValue NxPublishHosts,
+    MSBuildPropertyValue NxPackHosts,
+    MSBuildPropertyValue NxRestoreHosts,
     string TargetFramework,
     string TargetFrameworkIdentifier,
     string TargetFrameworkVersion,
@@ -84,8 +107,12 @@ internal sealed record MSBuildProjectEvaluation(
     string TargetPlatformVersion,
     string IsTestProject,
     string IsPackable,
+    string IsPublishable,
     string PackAsTool,
     string UseMaui,
+    string OutputType,
     string PackageId,
     string AssemblyName,
+    IReadOnlyList<string> RuntimeIdentifiers,
+    IReadOnlyList<string> PackageReferences,
     IReadOnlyList<MSBuildItemValue> NxTagItems);

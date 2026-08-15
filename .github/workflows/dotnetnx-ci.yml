@@ -48,12 +48,13 @@ jobs:
             --workspace DotnetNx \
             --project src/DotnetNx.Core/DotnetNx.Core.csproj \
             > dotnetnx-metadata.json
-          node -e 'JSON.parse(require("fs").readFileSync("dotnetnx-metadata.json", "utf8"))'
+          node -e 'const m=JSON.parse(require("fs").readFileSync("dotnetnx-metadata.json","utf8")); const p=m.projects[0]; if(!p.configurations?.length || !p.capabilities || !p.targetHostRequirements) process.exit(1)'
 
       - name: Validate npm plugin
         working-directory: DotnetNx/npm/dotnet-nx
         run: |
           node --check index.js
+          npm test
           npm pack --dry-run
 
       - name: Pack NuGet packages

@@ -1,20 +1,56 @@
 namespace DotnetNx.Core;
 
-public sealed record ProjectHostMetadata(
+public enum DotnetMetadataSource
+{
+    Explicit,
+    Inferred,
+}
+
+public sealed record DotnetProjectCapabilities(
+    bool IsTest,
+    bool IsExecutable,
+    bool IsPackable,
+    bool IsPublishable,
+    bool IsTool,
+    IReadOnlyList<string> PackageIds);
+
+public sealed record DotnetTargetFrameworkMetadata(
+    string ShortName,
+    string Framework,
+    string FrameworkVersion,
+    string? Profile,
+    string? Platform,
+    string? PlatformVersion);
+
+public sealed record DotnetTargetHostRequirement(
+    string Target,
+    IReadOnlyList<string> Hosts,
+    DotnetMetadataSource Source,
+    string? SourceFile,
+    string Rationale);
+
+public sealed record DotnetProjectConfigurationMetadata(
+    string? TargetFramework,
+    DotnetTargetFrameworkMetadata? Framework,
+    IReadOnlyList<string> RuntimeIdentifiers,
+    DotnetProjectCapabilities Capabilities,
+    IReadOnlyList<string> ExplicitTags,
+    IReadOnlyList<DotnetTargetHostRequirement> TargetHostRequirements);
+
+public sealed record DotnetProjectMetadata(
     string ProjectFile,
     string ProjectRoot,
     string ProjectName,
-    IReadOnlyList<string> PackageIds,
-    IReadOnlyList<string> BuildableOn,
+    string ProjectType,
+    IReadOnlyList<string> Technologies,
+    DotnetProjectCapabilities Capabilities,
+    IReadOnlyList<DotnetProjectConfigurationMetadata> Configurations,
+    IReadOnlyList<DotnetTargetHostRequirement> TargetHostRequirements,
     IReadOnlyList<string> ExplicitTags,
-    IReadOnlyList<string> InferredTags,
     IReadOnlyList<string> Tags,
-    string Resolution,
-    string? SourceFile,
-    IReadOnlyList<string> TargetFrameworks,
     IReadOnlyList<DotnetNxDiagnostic> Diagnostics);
 
 public sealed record WorkspaceProjectMetadata(
     string WorkspaceRoot,
-    IReadOnlyList<ProjectHostMetadata> Projects,
+    IReadOnlyList<DotnetProjectMetadata> Projects,
     IReadOnlyList<DotnetNxDiagnostic> Diagnostics);

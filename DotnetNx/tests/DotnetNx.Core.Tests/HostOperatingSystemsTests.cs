@@ -10,20 +10,36 @@ public sealed class HostOperatingSystemsTests
     [InlineData("tvos", "macos")]
     [InlineData("macos", "macos")]
     [InlineData("windows", "windows")]
-    public void InferFromTargetPlatform_routes_platform_tfms_to_required_host(string platform, string expectedHost)
+    public void InferBuildHosts_routes_platform_tfms_to_advisory_host(string platform, string expectedHost)
     {
-        Assert.Equal([expectedHost], HostOperatingSystems.InferFromTargetPlatform(platform));
+        Assert.Equal([expectedHost], HostOperatingSystems.InferBuildHosts(platform, []));
     }
 
     [Fact]
-    public void InferFromTargetFramework_keeps_plain_managed_and_android_projects_buildable_everywhere()
+    public void InferBuildHosts_keeps_plain_managed_and_android_projects_advisory_on_all_hosts()
     {
-        Assert.Equal(["linux", "macos", "windows"], HostOperatingSystems.InferFromTargetFrameworks(["net10.0", "net10.0-android"]));
+        Assert.Equal(
+            ["linux", "macos", "windows"],
+            HostOperatingSystems.InferBuildHosts("android", []));
     }
 
     [Fact]
-    public void ToTags_adds_any_tag_when_all_hosts_are_supported()
+    public void InferBuildHosts_uses_runtime_identifier_when_platform_is_neutral()
     {
-        Assert.Equal(["os:linux", "os:macos", "os:windows", "os:any"], HostOperatingSystems.ToTags(["linux", "macos", "windows"]));
+        Assert.Equal(
+            ["linux"],
+            HostOperatingSystems.InferBuildHosts(string.Empty, ["linux-arm64"]));
+    }
+
+    [Fact]
+    public void Intersect_returns_hosts_shared_by_every_configuration()
+    {
+        Assert.Equal(
+            ["macos"],
+            HostOperatingSystems.Intersect(
+                [
+                    ["linux", "macos", "windows"],
+                    ["macos"],
+                ]));
     }
 }

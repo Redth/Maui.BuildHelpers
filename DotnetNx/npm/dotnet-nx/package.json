@@ -4,6 +4,9 @@
   "description": "Thin Nx plugin that delegates .NET/MSBuild project metadata to nxdn.",
   "main": "index.js",
   "type": "commonjs",
+  "scripts": {
+    "test": "node --test"
+  },
   "files": [
     "index.js",
     "schema.json",

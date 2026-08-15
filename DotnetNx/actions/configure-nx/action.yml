@@ -18,6 +18,22 @@ inputs:
     description: '@nx/dotnet plugin package name.'
     required: false
     default: '@nx/dotnet'
+  selector-tags:
+    description: Optional comma-separated metadata dimensions to expose as namespaced Nx selector tags.
+    required: false
+    default: ''
+  selector-tag-prefix:
+    description: Prefix for opt-in selector tags.
+    required: false
+    default: dotnet
+  host-target:
+    description: Target represented by host selector tags.
+    required: false
+    default: build
+  include-inferred-host-selectors:
+    description: Whether advisory inferred host compatibility may become selector tags.
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -29,10 +45,24 @@ runs:
         DOTNET_NX_WRITE: ${{ inputs.write }}
         DOTNET_NX_PLUGIN: ${{ inputs.plugin }}
         DOTNET_NX_DOTNET_PLUGIN: ${{ inputs.dotnet-plugin }}
+        DOTNET_NX_SELECTOR_TAGS: ${{ inputs.selector-tags }}
+        DOTNET_NX_SELECTOR_TAG_PREFIX: ${{ inputs.selector-tag-prefix }}
+        DOTNET_NX_HOST_TARGET: ${{ inputs.host-target }}
+        DOTNET_NX_INCLUDE_INFERRED_HOST_SELECTORS: ${{ inputs.include-inferred-host-selectors }}
       run: |
         set -euo pipefail
         args=(configure-nx --plugin "$DOTNET_NX_PLUGIN" --dotnet-plugin "$DOTNET_NX_DOTNET_PLUGIN")
         if [[ "$DOTNET_NX_WRITE" == "true" ]]; then
           args+=(--write)
         fi
+        if [[ -n "$DOTNET_NX_SELECTOR_TAGS" ]]; then
+          args+=(--selector-tags "$DOTNET_NX_SELECTOR_TAGS")
+        fi
+        if [[ -n "$DOTNET_NX_SELECTOR_TAG_PREFIX" ]]; then
+          args+=(--selector-tag-prefix "$DOTNET_NX_SELECTOR_TAG_PREFIX")
+        fi
+        if [[ -n "$DOTNET_NX_HOST_TARGET" ]]; then
+          args+=(--host-target "$DOTNET_NX_HOST_TARGET")
+        fi
+        args+=(--include-inferred-host-selectors "$DOTNET_NX_INCLUDE_INFERRED_HOST_SELECTORS")
         nxdn "${args[@]}"

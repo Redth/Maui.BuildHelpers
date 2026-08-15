@@ -69,6 +69,60 @@ public sealed class ProgramTests
         Assert.Contains("nx.json does not contain a plugins array", error.ToString());
     }
 
+    [Fact]
+    public void ConfigureNx_write_configures_selector_tags_without_discarding_existing_options()
+    {
+        using var workspace = TemporaryWorkspace.Create();
+        workspace.Write(
+            "nx.json",
+            """
+            {
+              "plugins": [
+                "@nx/dotnet",
+                {
+                  "plugin": "@redth/dotnet-nx",
+                  "options": {
+                    "nxdnPath": "./tools/nxdn"
+                  }
+                }
+              ]
+            }
+            """);
+        workspace.Write(
+            "package.json",
+            """
+            {
+              "devDependencies": {
+                "@nx/dotnet": "22.7.0",
+                "@redth/dotnet-nx": "0.1.0"
+              }
+            }
+            """);
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        var exitCode = Program.Run(
+            [
+                "configure-nx",
+                "--workspace", workspace.Root,
+                "--write",
+                "--selector-tags", "platform,host",
+                "--host-target", "test",
+                "--include-inferred-host-selectors", "false",
+            ],
+            output,
+            error);
+
+        Assert.Equal(0, exitCode);
+        Assert.Empty(error.ToString());
+        var nxJson = File.ReadAllText(Path.Combine(workspace.Root, "nx.json"));
+        Assert.Contains("\"nxdnPath\": \"./tools/nxdn\"", nxJson);
+        Assert.Contains("\"platform\"", nxJson);
+        Assert.Contains("\"host\"", nxJson);
+        Assert.Contains("\"hostTarget\": \"test\"", nxJson);
+        Assert.Contains("\"includeInferredHostSelectors\": false", nxJson);
+    }
+
     private sealed class TemporaryWorkspace : IDisposable
     {
         private TemporaryWorkspace(string root)

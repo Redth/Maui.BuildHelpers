@@ -1,5 +1,5 @@
 name: DotnetNx affected matrix
-description: Compute affected project lists and an OS-tagged matrix for DotnetNx/Nx workflows.
+description: Compute a target-specific host matrix from opt-in DotnetNx selector tags.
 
 inputs:
   workspace:
@@ -18,6 +18,22 @@ inputs:
     description: Directory where affected JSON artifacts are written.
     required: false
     default: artifacts/nx
+  target:
+    description: Nx target whose host selector tags are queried.
+    required: false
+    default: build
+  selector-tag-prefix:
+    description: Prefix used by the DotnetNx plugin for selector tags.
+    required: false
+    default: dotnet
+  host-preference:
+    description: Comma-separated runner preference used to assign each compatible project exactly once.
+    required: false
+    default: linux,macos,windows
+  fail-on-unrouted:
+    description: Fail when an affected project has no eligible host selector.
+    required: false
+    default: 'true'
 
 outputs:
   base:
@@ -27,11 +43,17 @@ outputs:
     description: Resolved head SHA.
     value: ${{ steps.range.outputs.head }}
   matrix:
-    description: JSON matrix with entries for OS tags that have affected projects.
+    description: JSON matrix with entries for hosts that have affected projects for the selected target.
     value: ${{ steps.summary.outputs.matrix }}
   has-work:
-    description: true when any OS tag has affected projects.
+    description: true when any host has affected projects.
     value: ${{ steps.summary.outputs.has-work }}
+  has-unrouted:
+    description: true when any affected project has no eligible host selector.
+    value: ${{ steps.summary.outputs.has-unrouted }}
+  unrouted-projects-json:
+    description: JSON array of affected projects with no eligible host selector.
+    value: ${{ steps.summary.outputs.unrouted-projects-json }}
   has-linux:
     description: true when Linux has affected projects.
     value: ${{ steps.summary.outputs.has-linux }}
@@ -81,54 +103,88 @@ runs:
         echo "base=$base" >> "$GITHUB_OUTPUT"
         echo "head=$head" >> "$GITHUB_OUTPUT"
 
-    - name: Compute OS affected lists
+    - name: Compute host affected lists
       shell: bash
       working-directory: ${{ inputs.workspace }}
+      env:
+        DOTNET_NX_TARGET: ${{ inputs.target }}
+        DOTNET_NX_SELECTOR_TAG_PREFIX: ${{ inputs.selector-tag-prefix }}
       run: |
         set -euo pipefail
         mkdir -p "${{ inputs.artifact-directory }}"
-        for os_tag in linux macos windows; do
+        nxdn show-projects -- \
+          --affected \
+          --base="${{ steps.range.outputs.base }}" \
+          --head="${{ steps.range.outputs.head }}" \
+          --json > "${{ inputs.artifact-directory }}/affected-all.json"
+        for host in linux macos windows; do
           nxdn show-projects -- \
             --affected \
             --base="${{ steps.range.outputs.base }}" \
             --head="${{ steps.range.outputs.head }}" \
-            --projects="tag:os:${os_tag}" \
-            --json > "${{ inputs.artifact-directory }}/affected-${os_tag}.json"
+            --projects="tag:${DOTNET_NX_SELECTOR_TAG_PREFIX}:host:${DOTNET_NX_TARGET}:${host}" \
+            --json > "${{ inputs.artifact-directory }}/affected-${host}.json"
         done
 
-    - name: Summarize OS affected matrix
+    - name: Summarize host affected matrix
       id: summary
       shell: bash
       working-directory: ${{ inputs.workspace }}
       env:
         ARTIFACT_DIRECTORY: ${{ inputs.artifact-directory }}
+        DOTNET_NX_HOST_PREFERENCE: ${{ inputs.host-preference }}
+        DOTNET_NX_FAIL_ON_UNROUTED: ${{ inputs.fail-on-unrouted }}
       run: |
         set -euo pipefail
         node <<'JS'
         const fs = require('fs');
-        const oses = ['linux', 'macos', 'windows'];
+        const hosts = ['linux', 'macos', 'windows'];
         const output = process.env.GITHUB_OUTPUT;
         const summary = process.env.GITHUB_STEP_SUMMARY;
         const dir = process.env.ARTIFACT_DIRECTORY;
         const rows = [];
 
-        function readProjects(os) {
-          const file = `${dir}/affected-${os}.json`;
+        function readProjects(host) {
+          const file = `${dir}/affected-${host}.json`;
           const raw = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : '[]';
           const parsed = raw ? JSON.parse(raw) : [];
           return (Array.isArray(parsed) ? parsed : Object.keys(parsed)).sort();
         }
 
-        const projectsByOs = Object.fromEntries(oses.map(os => [os, readProjects(os)]));
+        const affectedProjects = (() => {
+          const file = `${dir}/affected-all.json`;
+          const raw = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : '[]';
+          const parsed = raw ? JSON.parse(raw) : [];
+          return (Array.isArray(parsed) ? parsed : Object.keys(parsed)).sort();
+        })();
+        const compatibleByHost = Object.fromEntries(hosts.map(host => [host, readProjects(host)]));
+        const preference = process.env.DOTNET_NX_HOST_PREFERENCE
+          .split(',')
+          .map(host => host.trim())
+          .filter(Boolean);
+        if (preference.length !== hosts.length ||
+            new Set(preference).size !== hosts.length ||
+            preference.some(host => !hosts.includes(host))) {
+          throw new Error('host-preference must list linux, macos, and windows exactly once.');
+        }
+        const projectsByHost = Object.fromEntries(hosts.map(host => [host, []]));
+        const unrouted = [];
+        for (const project of affectedProjects) {
+          const assignedHost = preference.find(host => compatibleByHost[host].includes(project));
+          if (assignedHost) {
+            projectsByHost[assignedHost].push(project);
+          } else {
+            unrouted.push(project);
+          }
+        }
         const matrix = {
-          include: oses
-            .filter(os => projectsByOs[os].length > 0)
-            .map(os => ({
-              os,
-              osTag: os,
-              runner: os === 'windows' ? 'windows-latest' : os === 'macos' ? 'macos-latest' : 'ubuntu-latest',
-              projects: projectsByOs[os],
-              count: projectsByOs[os].length,
+          include: hosts
+            .filter(host => projectsByHost[host].length > 0)
+            .map(host => ({
+              host,
+              runner: host === 'windows' ? 'windows-latest' : host === 'macos' ? 'macos-latest' : 'ubuntu-latest',
+              projects: projectsByHost[host],
+              count: projectsByHost[host].length,
             })),
         };
 
@@ -138,21 +194,31 @@ runs:
 
         writeOutput('matrix', JSON.stringify(matrix));
         writeOutput('has-work', matrix.include.length > 0 ? 'true' : 'false');
-        for (const os of oses) {
-          writeOutput(`has-${os}`, projectsByOs[os].length > 0 ? 'true' : 'false');
-          writeOutput(`${os}-count`, String(projectsByOs[os].length));
-          writeOutput(`${os}-projects-json`, JSON.stringify(projectsByOs[os]));
-          rows.push(`| ${os} | ${projectsByOs[os].length} | ${projectsByOs[os].map(p => `\`${p}\``).join('<br>') || '_None_'} |`);
+        writeOutput('has-unrouted', unrouted.length > 0 ? 'true' : 'false');
+        writeOutput('unrouted-projects-json', JSON.stringify(unrouted));
+        for (const host of hosts) {
+          writeOutput(`has-${host}`, projectsByHost[host].length > 0 ? 'true' : 'false');
+          writeOutput(`${host}-count`, String(projectsByHost[host].length));
+          writeOutput(`${host}-projects-json`, JSON.stringify(projectsByHost[host]));
+          rows.push(`| ${host} | ${projectsByHost[host].length} | ${projectsByHost[host].map(p => `\`${p}\``).join('<br>') || '_None_'} |`);
         }
 
         if (summary) {
           fs.appendFileSync(summary, [
             '## DotnetNx affected matrix',
             '',
-            '| OS tag | Count | Projects |',
+            '| Host | Count | Projects |',
             '| --- | ---: | --- |',
             ...rows,
             '',
+            `Unrouted affected projects: **${unrouted.length}**`,
+            '',
+            ...unrouted.map(project => `- \`${project}\``),
+            '',
           ].join('\n'));
+        }
+        if (unrouted.length > 0 && process.env.DOTNET_NX_FAIL_ON_UNROUTED === 'true') {
+          console.error(`Unrouted affected projects: ${unrouted.join(', ')}`);
+          process.exitCode = 1;
         }
         JS

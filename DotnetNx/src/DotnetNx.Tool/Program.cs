@@ -98,6 +98,10 @@ public static class Program
         var write = TakeFlag(args, "--write");
         var dotnetPlugin = TakeOption(args, "--dotnet-plugin") ?? "@nx/dotnet";
         var plugin = TakeOption(args, "--plugin") ?? "@redth/dotnet-nx";
+        var selectorTags = SplitList(TakeOption(args, "--selector-tags"));
+        var selectorTagPrefix = TakeOption(args, "--selector-tag-prefix");
+        var hostTarget = TakeOption(args, "--host-target");
+        var includeInferredHostSelectors = TakeBooleanOption(args, "--include-inferred-host-selectors");
         var requiredPlugins = new[] { dotnetPlugin, plugin };
         var nxJsonPath = Path.Combine(workspaceRoot, "nx.json");
         var root = ReadNxJson(nxJsonPath, write);
@@ -124,14 +128,42 @@ public static class Program
 
         foreach (var missingPlugin in missing)
         {
-            plugins.Add(missingPlugin);
+            plugins.Add(missingPlugin == plugin && HasPluginOptions(
+                selectorTags,
+                selectorTagPrefix,
+                hostTarget,
+                includeInferredHostSelectors)
+                    ? CreatePluginEntry(
+                        plugin,
+                        selectorTags,
+                        selectorTagPrefix,
+                        hostTarget,
+                        includeInferredHostSelectors)
+                    : missingPlugin);
         }
 
-        if (missing.Length > 0)
+        var updatedPluginOptions = false;
+        if (write &&
+            missing.All(missingPlugin => missingPlugin != plugin) &&
+            HasPluginOptions(selectorTags, selectorTagPrefix, hostTarget, includeInferredHostSelectors))
+        {
+            updatedPluginOptions = ConfigurePluginOptions(
+                plugins,
+                plugin,
+                selectorTags,
+                selectorTagPrefix,
+                hostTarget,
+                includeInferredHostSelectors);
+        }
+
+        if (missing.Length > 0 || updatedPluginOptions)
         {
             Directory.CreateDirectory(workspaceRoot);
             File.WriteAllText(nxJsonPath, root.ToJsonString(JsonServices.Options) + Environment.NewLine);
-            output.WriteLine($"Updated {Path.GetRelativePath(Environment.CurrentDirectory, nxJsonPath)} with {string.Join(", ", missing)}.");
+            var changes = missing.Length > 0
+                ? string.Join(", ", missing)
+                : $"{plugin} options";
+            output.WriteLine($"Updated {Path.GetRelativePath(Environment.CurrentDirectory, nxJsonPath)} with {changes}.");
         }
         else
         {
@@ -372,6 +404,143 @@ public static class Program
         return false;
     }
 
+    private static bool ConfigurePluginOptions(
+        JsonArray plugins,
+        string plugin,
+        IReadOnlyList<string> selectorTags,
+        string? selectorTagPrefix,
+        string? hostTarget,
+        bool? includeInferredHostSelectors)
+    {
+        for (var index = 0; index < plugins.Count; index++)
+        {
+            var entry = plugins[index];
+            if (entry is JsonValue value &&
+                value.TryGetValue<string>(out var pluginName) &&
+                string.Equals(pluginName, plugin, StringComparison.Ordinal))
+            {
+                plugins[index] = CreatePluginEntry(
+                    plugin,
+                    selectorTags,
+                    selectorTagPrefix,
+                    hostTarget,
+                    includeInferredHostSelectors);
+                return true;
+            }
+
+            if (entry is not JsonObject pluginObject ||
+                pluginObject["plugin"]?.GetValue<string>() != plugin)
+            {
+                continue;
+            }
+
+            var before = pluginObject.ToJsonString();
+            var options = pluginObject["options"] as JsonObject;
+            if (options is null)
+            {
+                options = new JsonObject();
+                pluginObject["options"] = options;
+            }
+            ApplyPluginOptions(
+                options,
+                selectorTags,
+                selectorTagPrefix,
+                hostTarget,
+                includeInferredHostSelectors);
+            if (before == pluginObject.ToJsonString())
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static JsonObject CreatePluginEntry(
+        string plugin,
+        IReadOnlyList<string> selectorTags,
+        string? selectorTagPrefix,
+        string? hostTarget,
+        bool? includeInferredHostSelectors)
+    {
+        var options = new JsonObject();
+        ApplyPluginOptions(
+            options,
+            selectorTags,
+            selectorTagPrefix,
+            hostTarget,
+            includeInferredHostSelectors);
+
+        return new JsonObject
+        {
+            ["plugin"] = plugin,
+            ["options"] = options,
+        };
+    }
+
+    private static void ApplyPluginOptions(
+        JsonObject options,
+        IReadOnlyList<string> selectorTags,
+        string? selectorTagPrefix,
+        string? hostTarget,
+        bool? includeInferredHostSelectors)
+    {
+        if (selectorTags.Count > 0)
+        {
+            var tags = new JsonArray();
+            foreach (var selectorTag in selectorTags)
+            {
+                tags.Add(selectorTag);
+            }
+            options["selectorTags"] = tags;
+        }
+        if (!string.IsNullOrWhiteSpace(selectorTagPrefix))
+        {
+            options["selectorTagPrefix"] = selectorTagPrefix;
+        }
+        if (!string.IsNullOrWhiteSpace(hostTarget))
+        {
+            options["hostTarget"] = hostTarget;
+        }
+        if (includeInferredHostSelectors is not null)
+        {
+            options["includeInferredHostSelectors"] = includeInferredHostSelectors.Value;
+        }
+    }
+
+    private static bool HasPluginOptions(
+        IReadOnlyCollection<string> selectorTags,
+        string? selectorTagPrefix,
+        string? hostTarget,
+        bool? includeInferredHostSelectors) =>
+        selectorTags.Count > 0 ||
+        !string.IsNullOrWhiteSpace(selectorTagPrefix) ||
+        !string.IsNullOrWhiteSpace(hostTarget) ||
+        includeInferredHostSelectors is not null;
+
+    private static IReadOnlyList<string> SplitList(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? []
+            : value
+                .Split([';', ',', ' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+
+    private static bool? TakeBooleanOption(List<string> args, string name)
+    {
+        var value = TakeOption(args, name);
+        if (value is null)
+        {
+            return null;
+        }
+
+        return bool.TryParse(value, out var parsed)
+            ? parsed
+            : throw new ArgumentException($"Invalid value '{value}' for {name}. Use true or false.");
+    }
+
     private static void WarnIfPackageMissing(string workspaceRoot, string packageName, TextWriter output)
     {
         var packageJsonPath = Path.Combine(workspaceRoot, "package.json");
@@ -417,6 +586,8 @@ public static class Program
         output.WriteLine("  nxdn project-metadata [--workspace <path>] [--project <path>]...");
         output.WriteLine("  nxdn diagnose [--workspace <path>]");
         output.WriteLine("  nxdn configure-nx [--workspace <path>] [--write] [--plugin <name>] [--dotnet-plugin <name>]");
+        output.WriteLine("      [--selector-tags <dimensions>] [--selector-tag-prefix <prefix>]");
+        output.WriteLine("      [--host-target <target>] [--include-inferred-host-selectors <true|false>]");
         output.WriteLine("  nxdn nx [--workspace <path>] -- <nx args>");
         output.WriteLine("  nxdn affected [--workspace <path>] -- <nx affected args>");
         output.WriteLine("  nxdn show-projects [--workspace <path>] -- <nx show projects args>");
